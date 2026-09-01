@@ -195,6 +195,27 @@ curl -s -X POST https://stressproof.dev/verify \
     fifteen minutes regardless of who pays.
   </p>
 
+  <h2>Paying for a run</h2>
+  <p class="muted">
+    Asking for a consent code is free. Starting the run costs
+    <strong>$0.25 in USDC on Base</strong>, charged once per run rather than per
+    probe, over x402. Start the run and you get a 402 back carrying everything a
+    paying client needs: the chain, the token, the amount, and the signing
+    domain.
+  </p>
+  <pre>curl -s -X POST https://stressproof.dev/runs/YOUR_RUN_ID/start
+# 402, with the payment challenge in the payment-required header
+
+curl -s https://stressproof.dev/about | grep -A4 '"payment"'
+# says whether paid runs are available right now, and why not if they are not</pre>
+  <p class="muted">
+    Two things worth knowing before you pay. The wallet that pays must be the
+    same wallet named in your consent file, because permission was granted to
+    that wallet and paying from another does not inherit it. And a run bills
+    even if your agent turns out to be unreachable: what you are paying for is
+    the probing, not a good verdict.
+  </p>
+
   <hr class="rule">
   <footer>
     <p><strong>StressProof</strong> — black-box resilience certification for AI agents.

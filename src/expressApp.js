@@ -23,6 +23,7 @@ import { issueChallenge, verifyChallenge } from './lib/consent.js';
 import { runCertification, toReport } from './lib/runCertification.js';
 import { signReport, verifyCertificate, getSignerAddress } from './lib/attestation.js';
 import { resolvePaymentConfig, buildCertifyPaymentOption, RUN_PRICE_USDC } from './lib/payment.js';
+import { createPaymentGate, readPayerFromRequest, paymentMatchesConsent } from './lib/paymentGate.js';
 import { MAX_REQUESTS_PER_RUN, PROBE_ORDER, CANARY_TOKEN } from './lib/spec.js';
 import { explainVerdict } from './lib/explain.js';
 
@@ -102,20 +103,33 @@ function withSignerCheck(result, certificate) {
   return out;
 }
 
-export function createApp({ demoAllowlist = [] } = {}) {
+export function createApp({ demoAllowlist = [], payment = createPaymentGate() } = {}) {
   const app = express();
   app.use(express.json({ limit: '256kb' }));
   app.use(express.static(path.join(__dirname, '..', 'public')));
 
+  // The paid route's door, mounted before any route so an unpaid request
+  // never reaches a handler. When the gate is not live there is no middleware
+  // to mount, and the paid handler refuses on its own. See the top of it.
+  if (payment.middleware) app.use(payment.middleware);
+
   // --- what this is, in machine-readable form ------------------------------
   app.get('/about', (_req, res) => {
-    const payment = resolvePaymentConfig();
+    const config = resolvePaymentConfig();
     res.json({
       product: 'StressProof',
       claim: 'We do not check whether your agent is correct. We check whether it tells you when it cannot answer.',
       probes: PROBE_ORDER,
       maxRequestsPerRun: MAX_REQUESTS_PER_RUN,
-      price: { amount: RUN_PRICE_USDC, currency: 'USDC', network: payment.network, per: 'run' },
+      price: { amount: RUN_PRICE_USDC, currency: 'USDC', network: config.network, per: 'run' },
+      // Stated plainly rather than inferred from whether a 402 comes back,
+      // so nobody has to probe the paid route to find out what it will do.
+      payment: {
+        status: payment.mode, // live | off | misconfigured
+        paidRunsAvailable: payment.enabled,
+        chargesFor: 'POST /runs/:runId/start',
+        note: payment.reason ?? 'One charge per run, not per probe. A run against an unreachable or broken target still bills: the work is the probing, not the verdict.',
+      },
       signerAddress: getSignerAddress(),
       canaryToken: CANARY_TOKEN, // published on purpose: see the page
       limitations: [
@@ -148,11 +162,32 @@ export function createApp({ demoAllowlist = [] } = {}) {
 
   // --- consent: step 2, then the actual run --------------------------------
   app.post('/runs/:runId/start', async (req, res) => {
+    // Refuse before anything else if this deployment was meant to charge and
+    // cannot. Reaching this line at all means the x402 middleware was never
+    // mounted, so continuing would hand out a free run, the one outcome a
+    // broken payment setup must never produce.
+    if (payment.mode === 'misconfigured') {
+      return res.status(503).json({ error: payment.reason });
+    }
+
     const target = pendingTargets.get(req.params.runId);
     if (!target) return res.status(404).json({ error: 'unknown run id' });
 
     const consent = await verifyChallenge({ runId: req.params.runId });
     if (!consent.ok) return res.status(403).json({ error: consent.reason });
+
+    // Payment proves a wallet spent money. Consent proves a wallet controls
+    // the target. Neither is worth much unless they are the same wallet: if
+    // they may differ, anyone holding a run id can buy 30 requests aimed at an
+    // agent somebody else vouched for.
+    const binding = paymentMatchesConsent({
+      paymentEnabled: payment.enabled,
+      paidBy: readPayerFromRequest(req),
+      consentPayer: consent.payerAddress,
+    });
+    if (!binding.ok) {
+      return res.status(403).json({ error: binding.reason, paidBy: binding.paidBy, expected: binding.expected });
+    }
 
     pendingTargets.delete(req.params.runId);
     const run = await runCertification(target);

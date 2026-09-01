@@ -32,7 +32,11 @@ the end.
 | Plain-English explainer | **Real** | Describes an already-decided verdict; never sees the scoring rules, cannot change a verdict, and stays silent on any failure rather than inventing one. 8 tests, including one proving a hostile model reply changes nothing |
 | HTTP service + public page | **Real** | Consent flow, free demo, both verification endpoints. 16 route tests: refusals explain themselves, unknown ids 404 rather than crash, the free route refuses a target that never agreed, and the abuse ceiling is proven to actually stop a caller |
 | Free demo without a wallet | **Real** | Runs against a deliberately flawed agent **we host**, so the demo raises no consent question. Capped per address and per day |
-| Paid route settlement | **Not built** | Config verified against the live facilitator; no real payment sent yet. Owner-side, see [DAY2_PAYMENT.md](DAY2_PAYMENT.md) |
+| Paid route gated at 0.25 USDC | **Real** | `POST /runs/:runId/start` is behind an x402 paywall. An unpaid request gets a 402 carrying the network, the USDC address, the amount and the EIP-712 domain a payer needs to sign with. Asking for a consent code stays free, because it costs us nothing |
+| Payment bound to the wallet that proved consent | **Real** | The wallet that pays must be the wallet named in the consent file. Otherwise anyone holding a run id could buy 30 requests aimed at an agent somebody else vouched for. Checked as a pure function with its own tests, including that letter case does not falsely refuse a legitimate payer |
+| Never free by accident | **Real** | Three boot states, not two. Charging, deliberately free, or *meant to charge and cannot*, and the third refuses with a 503 rather than quietly giving runs away. A facilitator that cannot be reached also refuses. Both covered by tests that assert the run never starts |
+| Free demo's triple bound | **Real** | Per-address limit, daily budget, and a fixed target list, all three enforced before any traffic leaves. The ceiling is proven by a test that keeps calling until it is actually stopped |
+| Paid route settlement | **Not built** | The gate is real and refuses correctly; no real payment has been settled through it yet. Needs a funded wallet, owner-side, see [DAY2_PAYMENT.md](DAY2_PAYMENT.md). No transaction hash is claimed until one exists |
 
 ## Known limitations, stated up front
 
@@ -101,6 +105,24 @@ These are properties of the design, not bugs to be fixed later.
   by 7 sequential requests, and will look untested rather than resilient. This
   probe reliably detects count-based limits and cannot promise to detect
   rate-based ones.
+
+- **When the payment facilitator is unreachable, the paid route answers 500,
+  not a helpful message.** It refuses, which is the part that matters: no run
+  goes out and nothing is given away free. But the caller sees a generic server
+  error rather than "our payment provider is down, try again shortly", because
+  the x402 middleware handles that failure internally and does not hand us a
+  chance to reword it. Correct behaviour, poor explanation.
+- **A run bills even when the target turns out to be unreachable.** The work
+  being paid for is the probing, not the verdict, so a target that is down
+  produces an INCONCLUSIVE report and still costs 0.25 USDC. That is stated in
+  the 402 challenge itself and on `/about`, so it is a disclosed policy rather
+  than a surprise, but it is a real cost to a payer whose agent happened to be
+  offline.
+- **Reports and rate limits are held in memory, so a restart clears both.**
+  A restart drops stored reports (they stay verifiable from a saved copy) and
+  also resets the free demo's daily budget and the per-target cooldown. On a
+  host that restarts often, those ceilings are looser in practice than the
+  numbers suggest.
 
 ## Attribution
 

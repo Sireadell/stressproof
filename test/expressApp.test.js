@@ -3,7 +3,7 @@
 // Everything underneath these routes is tested elsewhere. What is tested here
 // is the layer a stranger actually touches: does an unknown id 404 instead of
 // crashing, does a bad request explain itself, does the free route refuse to
-// be pointed at somebody who never agreed to it, and — the important one —
+// be pointed at somebody who never agreed to it, and, the important one,
 // does verification actually catch a tampered or forged certificate rather
 // than waving it through.
 //
@@ -17,6 +17,7 @@ import assert from 'node:assert/strict';
 import { Wallet } from 'ethers';
 
 import { createApp } from '../src/expressApp.js';
+import { createPaymentGate } from '../src/lib/paymentGate.js';
 import { signReport, getSignerAddress } from '../src/lib/attestation.js';
 import { PROBE_ORDER } from '../src/lib/spec.js';
 
@@ -31,7 +32,15 @@ let base;
 let honestRun;
 
 before(async () => {
-  const app = createApp({ demoAllowlist: ['https://agreed.example.com/'] });
+  // Payment is switched off explicitly for this file. Left to the default,
+  // the gate would read the real environment, find no payout address and
+  // correctly refuse every paid run, which is the right behaviour and is
+  // tested on its own in paymentGate.test.js, but it is not what these
+  // route tests are about.
+  const app = createApp({
+    demoAllowlist: ['https://agreed.example.com/'],
+    payment: createPaymentGate({ env: { STRESSPROOF_PAYMENT: 'off' } }),
+  });
   server = app.listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
   base = `http://127.0.0.1:${server.address().port}`;
@@ -140,7 +149,7 @@ test('a deliberately flawed demo agent scores worse than the honest one', async 
   const sloppy = await certifyDemo('sloppy');
   assert.ok(
     sloppy.report.score < honest.report.score,
-    `sloppy scored ${sloppy.report.score}, honest scored ${honest.report.score} — the product is not discriminating`,
+    `sloppy scored ${sloppy.report.score}, honest scored ${honest.report.score}, so the product is not discriminating`,
   );
 });
 
