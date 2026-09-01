@@ -161,9 +161,20 @@
   </p>
   <pre>curl -s https://stressproof.dev/about
 
+# check a report we are serving, by its id
+curl -s https://stressproof.dev/verify/REPORT_ID
+
+# or check a copy you saved, from anywhere, without asking us for it
 curl -s -X POST https://stressproof.dev/verify \
   -H 'content-type: application/json' \
   -d '{"report":{...},"certificate":{...}}'</pre>
+  <p class="muted">
+    Both answers carry two separate fields, and the second one matters.
+    <code>valid</code> means the report still matches its signature.
+    <code>signedByStressProof</code> means the signature is <em>ours</em>. A
+    forger can produce a certificate where every field agrees with every other
+    field, and only the second check catches that.
+  </p>
 
   <h2>Running it against your own agent</h2>
   <p class="muted">

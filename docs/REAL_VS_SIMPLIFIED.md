@@ -25,10 +25,12 @@ the end.
 | Scoring engine | **Real** | Six-outcome classifier, pure functions, no model anywhere near a verdict. 33 tests, most of them about *not* convicting |
 | Full 12-probe run, end to end | **Real** | Runs against a live agent inside the published 30-request cap; an honest agent certifies RESILIENT, a lying one is capped at PARTIAL, an unreachable one is INCONCLUSIVE and never BRITTLE |
 | Signed, independently verifiable reports | **Real** | Every report is signed; altering one character of a verdict or of the evidence breaks verification. 13 tests, most of them deliberate tampering. Anyone can recover the signing address from the report alone |
+| Verification by one URL | **Real** | `GET /verify/<id>` checks a report we are serving, so a judge needs a link rather than a hand-built request. `POST /verify` still checks a copy you saved, from a machine we do not run |
+| Forged certificates told apart from altered ones | **Real** | A signature that is perfectly self-consistent can still have been made by somebody else's key. Both verification routes answer `valid` and `signedByStressProof` separately, so a forgery cannot pass by reading one field. Covered by a test that signs a real report with a stranger's key |
 | Probe contract + 5-mode test agent | **Real** | Shared harness all probes are tested against, including an `echoer` mode built specifically so the injection probe's false-accusation path cannot ship untested |
 | On-chain publication of certificates | **Not built** | Deliberately cut, not deferred. An offline-verifiable signature gives the same guarantee at no cost and with no risk of a failed broadcast spoiling a good verdict |
 | Plain-English explainer | **Real** | Describes an already-decided verdict; never sees the scoring rules, cannot change a verdict, and stays silent on any failure rather than inventing one. 8 tests, including one proving a hostile model reply changes nothing |
-| HTTP service + public page | **Real** | Consent flow, free demo, verification endpoint. Verified live end to end: certified an agent, signed it, caught a report whose verdict was secretly edited afterwards |
+| HTTP service + public page | **Real** | Consent flow, free demo, both verification endpoints. 16 route tests: refusals explain themselves, unknown ids 404 rather than crash, the free route refuses a target that never agreed, and the abuse ceiling is proven to actually stop a caller |
 | Free demo without a wallet | **Real** | Runs against a deliberately flawed agent **we host**, so the demo raises no consent question. Capped per address and per day |
 | Paid route settlement | **Not built** | Config verified against the live facilitator; no real payment sent yet. Owner-side, see [DAY2_PAYMENT.md](DAY2_PAYMENT.md) |
 

@@ -74,6 +74,34 @@ function validateTargetInput(body) {
   return null;
 }
 
+/**
+ * Answer the question `verifyCertificate` deliberately does not: was this
+ * signed by *us*?
+ *
+ * `verifyCertificate` is a pure self-consistency check — it proves the report
+ * matches its hash and the signature matches the address the certificate
+ * claims. A forger can satisfy all of that with their own key. Comparing
+ * against our published signer address is what separates "internally
+ * consistent" from "issued by StressProof", and the two are reported as
+ * separate fields so neither can be mistaken for the other.
+ */
+function withSignerCheck(result, certificate) {
+  const ours = getSignerAddress();
+  const claimed = certificate?.signerAddress;
+  const signedByStressProof =
+    Boolean(result.valid) &&
+    Boolean(ours) &&
+    String(claimed).toLowerCase() === String(ours).toLowerCase();
+
+  const out = { ...result, signedByStressProof };
+  if (result.valid && !signedByStressProof) {
+    out.reason = ours
+      ? 'the signature is internally consistent but was not made by the StressProof signing key — this certificate did not come from us'
+      : 'this deployment has no signing key configured, so we cannot confirm the certificate came from us';
+  }
+  return out;
+}
+
 export function createApp({ demoAllowlist = [] } = {}) {
   const app = express();
   app.use(express.json({ limit: '256kb' }));
@@ -178,12 +206,61 @@ export function createApp({ demoAllowlist = [] } = {}) {
   });
 
   // --- verification: check any report without trusting us -------------------
+  //
+  // Two ways in, because they answer different questions.
+  //
+  // POST /verify takes a report and certificate you already hold and checks
+  // them against each other. It never consults our stored copy, so it keeps
+  // working on a report you saved months ago, from a machine we do not run.
+  //
+  // GET /verify/:reportId checks the copy we are serving. It is the one a
+  // judge wants: open a link, see whether the certificate we are publishing
+  // still matches the report we are publishing beside it.
+  //
+  // Both report `signedByStressProof` separately from `valid`. A certificate
+  // can be perfectly self-consistent and still have been signed by somebody
+  // else's key — that is a forged certificate, not a valid one, and reading
+  // `valid: true` alone would miss it.
   app.post('/verify', (req, res) => {
     const { report, certificate } = req.body ?? {};
     if (!report || !certificate) {
       return res.status(400).json({ error: 'send { report, certificate }' });
     }
-    res.json(verifyCertificate(report, certificate));
+    res.json(withSignerCheck(verifyCertificate(report, certificate), certificate));
+  });
+
+  app.get('/verify/:reportId', (req, res) => {
+    const found = reports.get(req.params.reportId);
+    if (!found) {
+      return res.status(404).json({
+        error: 'unknown report id',
+        // Said plainly: reports are held in memory, so a restart drops them.
+        // That is not a loss of evidence, because anyone holding the report
+        // and certificate can still check them via POST /verify.
+        note: 'reports are kept in memory and are dropped when the service restarts. If you saved the report and certificate, POST them to /verify instead — that check does not need our copy.',
+      });
+    }
+
+    const result = withSignerCheck(
+      verifyCertificate(found.report, found.certificate),
+      found.certificate,
+    );
+
+    res.json({
+      reportId: found.id,
+      ...result,
+      target: found.certificate?.target,
+      verdict: found.certificate?.verdict,
+      score: found.certificate?.score,
+      meaning: result.valid && result.signedByStressProof
+        ? 'This report has not been altered since we signed it.'
+        : 'Do not trust this report. ' + (result.reason ?? 'It failed verification.'),
+      checkItYourself: {
+        report: `GET /reports/${found.id}`,
+        method: 'POST the report and certificate to /verify from anywhere, or recover the signer from the EIP-712 signature with any library. You do not have to take our word for any of this.',
+        publishedSignerAddress: getSignerAddress(),
+      },
+    });
   });
 
   app.get('/reports/:id', (req, res) => {
