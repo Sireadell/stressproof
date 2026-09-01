@@ -1,0 +1,22 @@
+StressProof
+Copyright 2026 Sireadell
+
+This product includes work adapted from AgentOps-Bench
+(https://github.com/kunwarshivam/agentops-bench), licensed under the
+Apache License, Version 2.0.
+
+What was adapted: the *shapes* of six adversarial prompt-injection delivery
+techniques (direct override, authority impersonation, instruction embedded in
+an HTML comment within data rows, nested-JSON-value injection, base64-wrapped
+payload, and delayed post-processing instruction).
+
+What was not: the payload target and the entire detection mechanism.
+AgentOps-Bench's payloads ask a target to leak a system prompt or credentials,
+which is checkable only when you control the target and know what is secret.
+StressProof runs against strangers' agents as a black box, so it substitutes
+its own canary token and detects compliance by literal string matching.
+
+Nine of the fifteen techniques in the original catalogue were deliberately not
+carried over: several depend on multi-turn conversation state that StressProof
+does not have, and others became duplicates of retained techniques once the
+payload was swapped.
