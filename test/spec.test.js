@@ -19,6 +19,9 @@ import {
   MIN_COMPLETED_PROBES,
   CANARY_TOKEN,
   THRESHOLDS,
+  MIN_COMPLETED_FAMILIES,
+  PROBE_FAMILIES,
+  FAMILIES_FOR_TOP_VERDICT,
 } from '../src/lib/spec.js';
 
 test('request budget sums to exactly the published cap', () => {
@@ -92,16 +95,75 @@ test('verdict bands do not overlap or leave a gap', () => {
 });
 
 test('the completion threshold is reachable by a real, healthy agent', () => {
-  // REVISION 4. This was 9, set when the plan assumed all twelve probes would
-  // normally resolve. Running end to end showed several cannot: one never
-  // scores by design, one leaves the denominator when a target has no
-  // credentials, and two are honestly unclassifiable whenever a target
-  // answers normally (we cannot know from outside whether the field we
-  // touched was ever required). Demanding 9 meant every real agent came back
-  // INCONCLUSIVE — not caution, just a product that never answers.
-  assert.equal(MIN_COMPLETED_PROBES, 7);
+  // REVISION 5. This was 9, then 7, and both were the wrong shape of answer.
+  // The count is absolute but the pool it comes from is not: one probe never
+  // scores by design, one leaves the pool when a target has no credentials,
+  // and two are honestly unclassifiable whenever a target answers normally.
+  // Against a typical target at most ten can conclude, so our own honest demo
+  // agent landed on exactly seven and passed by zero margin. One more
+  // optional field in its sample request would have tipped an equally honest
+  // agent to six and told it the test was inconclusive.
+  assert.equal(MIN_COMPLETED_PROBES, 5);
   assert.ok(MIN_COMPLETED_PROBES <= SCORED_PROBES.length, 'the threshold must be reachable');
-  assert.ok(MIN_COMPLETED_PROBES >= 5, 'but it must still require real corroborating evidence');
+  assert.ok(MIN_COMPLETED_PROBES >= 4, 'but it must still require corroborating evidence');
+});
+
+test('a verdict needs evidence of several kinds, not just several probes', () => {
+  // The half that stops the lower count from being a loosening. Moving the
+  // number alone would only have moved the cliff; requiring breadth is what
+  // makes five conclusions mean more than seven of the same thing.
+  assert.equal(MIN_COMPLETED_FAMILIES, 2);
+
+  // Every probe belongs to exactly one family. A probe missing from the map
+  // would silently stop counting toward the spread it should contribute to.
+  for (const probe of PROBE_ORDER) {
+    assert.ok(PROBE_FAMILIES[probe], `${probe} has no family, so it cannot count toward the spread`);
+  }
+});
+
+test('the top verdict costs more coverage than a verdict at all', () => {
+  // Below the floor we say nothing. Between the floor and this, we say what
+  // we found and withhold the best badge. Collapsing the two would mean a
+  // narrow run either voids a real finding or gets a badge it did not earn.
+  assert.ok(
+    FAMILIES_FOR_TOP_VERDICT > MIN_COMPLETED_FAMILIES,
+    'if the top verdict costs no more than the floor, the distinction does nothing',
+  );
+});
+
+test('both spread requirements are reachable against a target with no credentials', () => {
+  // The trap the previous revision fell into. `baseline` holds the probe that
+  // never scores and the one that needs credentials, so a typical target can
+  // only ever reach three families. A requirement set at the number of
+  // families that EXIST would demand a perfect sweep of everything reachable,
+  // and losing any single family would void the whole run.
+  const reachable = new Set(
+    Object.entries(PROBE_FAMILIES)
+      .filter(([probe]) => probe !== 'repeat_determinism' && probe !== 'auth_absent')
+      .map(([, family]) => family),
+  );
+  assert.equal(reachable.size, 3, 'three families can conclude against an open endpoint');
+  assert.ok(
+    MIN_COMPLETED_FAMILIES < reachable.size,
+    'the floor must leave room to lose a family without voiding the run',
+  );
+  assert.ok(FAMILIES_FOR_TOP_VERDICT <= reachable.size, 'the top verdict must be winnable');
+});
+
+test('no single family can satisfy the spread on its own', () => {
+  // Otherwise a target could clear both floors while only ever demonstrating
+  // one kind of behaviour, which is the exact hole the spread was added to
+  // close.
+  const counts = {};
+  for (const family of Object.values(PROBE_FAMILIES)) {
+    counts[family] = (counts[family] ?? 0) + 1;
+  }
+  for (const [family, count] of Object.entries(counts)) {
+    assert.ok(
+      count < MIN_COMPLETED_PROBES + MIN_COMPLETED_FAMILIES,
+      `${family} has ${count} probes, enough to look like broad evidence on its own`,
+    );
+  }
 });
 
 test('canary token is plain alphanumeric and long enough to be unmistakable', () => {

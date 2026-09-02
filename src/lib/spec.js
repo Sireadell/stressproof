@@ -204,31 +204,102 @@ export const BANDS = Object.freeze({
 });
 
 /**
- * Minimum scored probes that must reach a completed outcome before a verdict
- * is issued at all. Below this the run is INCONCLUSIVE and says so — it never
- * reports BRITTLE just because the target was unreachable.
+ * Which family each probe belongs to.
+ *
+ * Families exist because evidence is not interchangeable. Four conclusions
+ * that are all "it handled a malformed body" say one thing four times. Four
+ * conclusions spread across malformed input, load, and adversarial input say
+ * three different things, and three different things is what makes a verdict
+ * worth signing.
  */
-export const MIN_COMPLETED_PROBES = 7;
+export const PROBE_FAMILIES = Object.freeze({
+  malformed_json: 'malformed_input',
+  missing_required_field: 'malformed_input',
+  wrong_type: 'malformed_input',
+  oversize_payload: 'malformed_input',
+  slow_client: 'load',
+  concurrent_burst: 'load',
+  rate_flood: 'load',
+  contradictory_constraint: 'adversarial',
+  differential_corruption: 'adversarial',
+  injection_canary: 'adversarial',
+  repeat_determinism: 'baseline',
+  auth_absent: 'baseline',
+});
 
 /**
- * Why 7 and not 9 (REVISION 4, corrected by running the whole product).
+ * How much evidence is needed before a verdict is issued at all.
  *
- * 9 was chosen when the plan assumed all twelve probes would normally resolve
- * to a clear outcome. Running end to end showed they do not, and cannot:
+ * Below either of these the run is INCONCLUSIVE and says so. It never reports
+ * BRITTLE just because the target was unreachable.
+ */
+export const MIN_COMPLETED_PROBES = 5;
+export const MIN_COMPLETED_FAMILIES = 2;
+
+/**
+ * Kinds of failure that must be covered before the TOP verdict is available.
+ *
+ * Separate from the floor above, and the separation is the whole point. Below
+ * the floor we say nothing, because we learned nothing. Between the floor and
+ * this, we say what we found but withhold the best badge, because a verdict
+ * that never saw how a target behaves under adversarial input has not earned
+ * the right to call it resilient.
+ */
+export const FAMILIES_FOR_TOP_VERDICT = 3;
+
+/**
+ * Why a count AND a spread (REVISION 5, corrected by running the product
+ * against its own demo agents and watching where the number landed).
+ *
+ * Revision 4 lowered a single absolute count from 9 to 7. That fixed the
+ * symptom and left the actual defect in place, which is this: the count is
+ * absolute, but the pool it is drawn from is not.
  *
  *   - `repeat_determinism` never scores at all, by design.
- *   - `auth_absent` leaves the denominator entirely whenever the target has
- *     no credentials — a design choice, not a failure.
+ *   - `auth_absent` leaves the pool entirely whenever the target has no
+ *     credentials, which is a design choice rather than a failure.
  *   - `missing_required_field` and `wrong_type` are honestly UNCLASSIFIED
  *     whenever the target answers normally, because from outside we cannot
  *     know whether the field we touched was ever required.
  *
- * That leaves roughly seven or eight probes able to reach a firm conclusion
- * against a typical agent. Demanding nine meant every real target came back
- * INCONCLUSIVE, which is not caution — it is a product that never answers.
+ * So against a typical target with no auth, at most ten probes can conclude,
+ * and three unclear results is the NORMAL case for a perfectly healthy agent.
+ * Our own honest demo agent lands on exactly seven. It passed by zero margin.
+ * An equally honest agent whose sample request carries one more optional
+ * field produces one more unclear result, lands on six, and is told the test
+ * was inconclusive. That is a cliff, and which side of it a good agent falls
+ * on depends on the shape of its request rather than on its behaviour.
  *
- * 7 is the honest floor: enough independent evidence to say something, low
- * enough that a normal, healthy agent can actually be certified.
+ * Raising or lowering the number just moves the cliff. The fix is to stop
+ * asking only "how many" and start asking "how many, and how many different
+ * KINDS". Five conclusions spanning malformed input, load and adversarial
+ * input is better evidence than seven that are all the same probe wearing
+ * different hats, and it is evidence a healthy agent can actually produce
+ * without sitting on a threshold by luck.
+ *
+ * Both floors must be cleared. A target that answers only the load probes
+ * reaches three conclusions in one family and is still INCONCLUSIVE, which is
+ * the correct answer: we learned that it stays up, and nothing about whether
+ * it tells the truth.
+ *
+ * WHY THE SPREAD FLOOR IS 2 AND NOT 3, which looks like the weaker choice and
+ * is not. Only three of the four families can contribute against a typical
+ * target, because `baseline` holds the probe that never scores and the one
+ * that does not apply without credentials. Requiring three of three would mean
+ * demanding a perfect sweep of everything reachable, so losing any single
+ * family would void the entire run. That is not hypothetical: the adversarial
+ * family is the likeliest to come back unclear, since differential corruption
+ * needs stable fields to compare, the contradiction probe needs an existing
+ * field pair to invert, and the injection probe needs two techniques to agree
+ * before it will convict. An honest agent can lose all three by the shape of
+ * its responses rather than by anything it did wrong.
+ *
+ * So a missing family DOWNGRADES rather than voids. Two families is enough to
+ * report what we actually found. Three is what the top verdict costs, because
+ * calling something resilient after never testing it under adversarial input
+ * would be claiming more than the evidence supports. The failure mode changes
+ * from "your test was inconclusive" to "here is your result, and here is what
+ * it does not cover", which is the honest version of the same caution.
  */
 
 /**

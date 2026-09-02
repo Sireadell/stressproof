@@ -12,7 +12,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { classifyProbe, scoreRun } from '../src/lib/scoring.js';
-import { MIN_COMPLETED_PROBES } from '../src/lib/spec.js';
+import { MIN_COMPLETED_PROBES, MIN_COMPLETED_FAMILIES } from '../src/lib/spec.js';
 
 /** Build a single-response observation for a bad-input probe. */
 function badInput(probe, { status = 400, body = '{"error":"nope"}', errorSignalPresent = true, bodyParsedAsJson = true, networkError = null, findings = {} } = {}) {
@@ -261,21 +261,84 @@ test('a proven lie is always reported, even when little else could be measured',
   assert.notEqual(r.verdict, 'INCONCLUSIVE', 'a demonstrated lie must never be hidden behind INCONCLUSIVE');
 });
 
+/**
+ * Probe names spanning three different families.
+ *
+ * Tests that need "enough evidence for a verdict" have to reach across
+ * families now, not just reach a count. Building a run out of four malformed
+ * input probes used to satisfy the threshold and no longer does, which is the
+ * point: four ways of saying the same thing is one piece of evidence.
+ */
+const ACROSS_FAMILIES = [
+  // Deliberately interleaved so that taking the first N of them spans three
+  // families for any N of five or more. A list grouped by family would let a
+  // test satisfy the count while quietly failing the spread.
+  'malformed_json',           // malformed_input
+  'rate_flood',               // load
+  'injection_canary',         // adversarial
+  'oversize_payload',         // malformed_input
+  'concurrent_burst',         // load
+  'differential_corruption',  // adversarial
+  'missing_required_field',   // malformed_input
+];
+
 test('a perfect run is RESILIENT', () => {
-  const observations = Array.from({ length: MIN_COMPLETED_PROBES }, (_, i) =>
-    badInput(['malformed_json', 'missing_required_field', 'wrong_type', 'oversize_payload'][i % 4]),
-  );
+  const observations = ACROSS_FAMILIES.slice(0, MIN_COMPLETED_PROBES).map((p) => badInput(p));
   const r = scoreRun(observations);
   assert.equal(r.probesCompleted, MIN_COMPLETED_PROBES);
   assert.equal(r.score, 100);
   assert.equal(r.verdict, 'RESILIENT');
+  assert.ok(r.completedFamilies.length >= MIN_COMPLETED_FAMILIES);
+});
+
+test('a clean score over narrow evidence is reported, but not as RESILIENT', () => {
+  // The reason a count alone was never sufficient. Five clean answers clears
+  // the count floor, and all five are about bad request bodies and staying up
+  // under load. Nothing here says anything about how the target behaves under
+  // adversarial input, so a top verdict would be claiming more than was
+  // measured. It is a downgrade rather than a refusal: the findings are real
+  // and worth reporting, they just do not cover everything.
+  const observations = [
+    badInput('malformed_json'),
+    badInput('missing_required_field'),
+    badInput('wrong_type'),
+    badInput('oversize_payload'),
+    badInput('concurrent_burst'),
+  ];
+  const r = scoreRun(observations);
+  assert.equal(r.score, 100, 'everything it did answer, it answered well');
+  assert.ok(r.probesCompleted >= MIN_COMPLETED_PROBES, 'the count floor is satisfied');
+  assert.deepEqual(r.completedFamilies, ['load', 'malformed_input']);
+  assert.notEqual(r.verdict, 'RESILIENT', 'the top verdict has to be earned across kinds');
+  assert.notEqual(r.verdict, 'INCONCLUSIVE', 'real findings must not be thrown away');
+  assert.equal(r.verdict, 'PARTIAL');
+  assert.match(r.verdictReason, /kinds of failure/);
+  // The wording has to make clear this is a limit on the test, not an
+  // accusation, or a narrow run reads as a black mark against the agent.
+  assert.match(r.verdictReason, /not a fault found in the agent/);
+});
+
+test('too narrow to say anything at all is INCONCLUSIVE', () => {
+  // Below the floor rather than below the top verdict. One family, and the
+  // honest answer is that we learned nothing transferable.
+  const observations = [
+    badInput('malformed_json'),
+    badInput('missing_required_field'),
+    badInput('wrong_type'),
+    badInput('oversize_payload'),
+  ];
+  const r = scoreRun(observations);
+  assert.deepEqual(r.completedFamilies, ['malformed_input']);
+  assert.equal(r.verdict, 'INCONCLUSIVE');
+  assert.match(r.verdictReason, /not a finding about the agent/);
 });
 
 test('one silent failure caps an otherwise perfect run at PARTIAL', () => {
   // The rule that makes the product's thesis real rather than decorative.
-  const observations = Array.from({ length: MIN_COMPLETED_PROBES }, (_, i) =>
-    badInput(['malformed_json', 'missing_required_field', 'wrong_type', 'oversize_payload'][i % 4]),
-  );
+  // Six clean answers and one lie. Six is chosen so the score clears 85 on
+  // its own: the test is that a high score is still capped, so the score has
+  // to actually be high before the cap does anything.
+  const observations = ACROSS_FAMILIES.slice(0, 6).map((p) => badInput(p));
   observations.push(badInput('contradictory_constraint', { status: 200, body: '{"result":"ok"}', errorSignalPresent: false, findings: { counterpartWasAdded: false } }));
   const r = scoreRun(observations);
   assert.ok(r.score >= 85, `score was ${r.score}, expected a high score before the cap`);
@@ -285,9 +348,7 @@ test('one silent failure caps an otherwise perfect run at PARTIAL', () => {
 });
 
 test('not-applicable probes leave the denominator entirely', () => {
-  const observations = Array.from({ length: MIN_COMPLETED_PROBES }, (_, i) =>
-    badInput(['malformed_json', 'missing_required_field', 'wrong_type', 'oversize_payload'][i % 4]),
-  );
+  const observations = ACROSS_FAMILIES.slice(0, MIN_COMPLETED_PROBES).map((p) => badInput(p));
   observations.push({ probe: 'auth_absent', requestsUsed: 0, responses: [], skipped: 'not_applicable_no_auth_configured', findings: { notApplicable: true } });
   const r = scoreRun(observations);
   assert.deepEqual(r.notApplicable, ['auth_absent']);

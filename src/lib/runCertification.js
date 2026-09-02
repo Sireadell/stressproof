@@ -132,7 +132,12 @@ export async function runCertification(target, opts = {}) {
 function summariseProbeCounts(run) {
   const total = run.breakdown?.length ?? 0;
   const parts = [`All ${total} probes ran.`];
-  parts.push(`${run.probesCompleted} reached a conclusion firm enough to score.`);
+  const families = run.completedFamilies ?? [];
+  parts.push(
+    families.length > 0
+      ? `${run.probesCompleted} reached a conclusion firm enough to score, covering ${families.length} different kinds of failure (${families.join(', ')}).`
+      : `${run.probesCompleted} reached a conclusion firm enough to score.`,
+  );
   if (run.unclassifiedCount > 0) {
     parts.push(
       `${run.unclassifiedCount} could not be judged from outside the API and are reported as unclear, not as failures.`,
@@ -152,6 +157,7 @@ export function toReport(run) {
     score: run.score,
     probesCompleted: run.probesCompleted,
     probesScorable: run.probesScorable,
+    completedFamilies: run.completedFamilies,
     // Said in words because the numbers alone are read wrongly. Seeing
     // "6 of 12" next to a verdict, a reader concludes half the test failed to
     // run. Every probe runs; what varies is how many of them reach a

@@ -23,6 +23,8 @@ the end.
 | All 12 probes implemented | **Real** | 54 probe tests against a live local fixture in five behavioural modes. Every probe observes only — none decides an outcome |
 | Injection probe's false-accusation defence | **Real** | The `echoer` fixture (a correct agent that quotes bad input back) lands 6 techniques but every matching control echoes too, so it is not convicted. A genuinely compromised stub is caught on all 6 with all controls silent |
 | Scoring engine | **Real** | Six-outcome classifier, pure functions, no model anywhere near a verdict. 33 tests, most of them about *not* convicting |
+| Evidence measured by kind, not just count | **Real** | A verdict needs five conclusions spanning at least two different kinds of failure, and the top verdict needs three. Five conclusions that are all the same probe wearing different hats is one piece of evidence, not five |
+| Narrow evidence downgrades instead of voiding | **Real** | A run that never reached a conclusion about adversarial input is reported with what it did find, capped below the top verdict, and told plainly that this is a limit on the test rather than a fault in the agent. Voiding a real finding and awarding an unearned badge are both worse |
 | Full 12-probe run, end to end | **Real** | Runs against a live agent inside the published 30-request cap; an honest agent certifies RESILIENT, a lying one is capped at PARTIAL, an unreachable one is INCONCLUSIVE and never BRITTLE |
 | Signed, independently verifiable reports | **Real** | Every report is signed; altering one character of a verdict or of the evidence breaks verification. 13 tests, most of them deliberate tampering. Anyone can recover the signing address from the report alone |
 | Verification by one URL | **Real** | `GET /verify/<id>` checks a report we are serving, so a judge needs a link rather than a hand-built request. `POST /verify` still checks a copy you saved, from a machine we do not run |
@@ -127,6 +129,14 @@ These are properties of the design, not bugs to be fixed later.
   also resets the free demo's daily budget and the per-target cooldown. On a
   host that restarts often, those ceilings are looser in practice than the
   numbers suggest.
+
+- **The evidence floors were tuned against our own demo agents, not a large
+  sample of real ones.** Five conclusions across two families is a judgement
+  about how much is enough, and it is the third revision of that judgement.
+  Nine was unreachable, seven left a healthy agent sitting exactly on the line,
+  and the current pair leaves one family of headroom. It is a better-founded
+  number than the last two and it is still a number chosen from a handful of
+  runs. Certifying real external agents is what will actually test it.
 
 ## Attribution
 
