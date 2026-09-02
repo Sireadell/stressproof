@@ -18,6 +18,7 @@
 import express from 'express';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { readFile } from 'node:fs/promises';
 
 import { issueChallenge, verifyChallenge } from './lib/consent.js';
 import { runCertification, toReport } from './lib/runCertification.js';
@@ -25,7 +26,7 @@ import { signReport, verifyCertificate, getSignerAddress } from './lib/attestati
 import { resolvePaymentConfig, buildCertifyPaymentOption, RUN_PRICE_USDC } from './lib/payment.js';
 import { createPaymentGate, readPayerFromRequest, paymentMatchesConsent } from './lib/paymentGate.js';
 import { MAX_REQUESTS_PER_RUN, PROBE_ORDER, CANARY_TOKEN } from './lib/spec.js';
-import { explainVerdict } from './lib/explain.js';
+import { explainVerdict, explainerStatus } from './lib/explain.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -130,6 +131,18 @@ export function createApp({ demoAllowlist = [], payment = createPaymentGate() } 
         chargesFor: 'POST /runs/:runId/start',
         note: payment.reason ?? 'One charge per run, not per probe. A run against an unreachable or broken target still bills: the work is the probing, not the verdict.',
       },
+      // Same reasoning as the payment block above. A missing explanation is
+      // ambiguous unless the service says which kind of missing it is.
+      explainer: (() => {
+        const status = explainerStatus();
+        return {
+          available: status.configured,
+          model: status.model ?? null,
+          note:
+            status.reason ??
+            'Describes an already-decided verdict in plain English. It never sees the scoring rules and cannot change a verdict. On any failure it stays silent rather than inventing one.',
+        };
+      })(),
       signerAddress: getSignerAddress(),
       canaryToken: CANARY_TOKEN, // published on purpose: see the page
       limitations: [
@@ -254,7 +267,7 @@ export function createApp({ demoAllowlist = [], payment = createPaymentGate() } 
   //
   // Both report `signedByStressProof` separately from `valid`. A certificate
   // can be perfectly self-consistent and still have been signed by somebody
-  // else's key — that is a forged certificate, not a valid one, and reading
+  // else's key. That is a forged certificate, not a valid one, and reading
   // `valid: true` alone would miss it.
   app.post('/verify', (req, res) => {
     const { report, certificate } = req.body ?? {};
@@ -272,24 +285,38 @@ export function createApp({ demoAllowlist = [], payment = createPaymentGate() } 
         // Said plainly: reports are held in memory, so a restart drops them.
         // That is not a loss of evidence, because anyone holding the report
         // and certificate can still check them via POST /verify.
-        note: 'reports are kept in memory and are dropped when the service restarts. If you saved the report and certificate, POST them to /verify instead — that check does not need our copy.',
+        note: 'reports are kept in memory and are dropped when the service restarts. If you saved the report and certificate, POST them to /verify instead, because that check does not need our copy.',
       });
     }
 
-    const result = withSignerCheck(
-      verifyCertificate(found.report, found.certificate),
-      found.certificate,
-    );
+    // An UNSIGNED report is not a failed one, and saying so matters. A
+    // deployment with no signing key produces reports with no certificate;
+    // running those through the tamper check answers "no certificate supplied"
+    // and, worded as a failure, would tell a reader to distrust a report that
+    // is perfectly sound and simply was never signed. Two different states,
+    // two different answers.
+    const unsigned = !found.certificate;
+    const result = unsigned
+      ? {
+          valid: null,
+          signedByStressProof: false,
+          reason:
+            'this report was never signed, because the deployment that produced it has no signing key configured. That is not a sign of tampering: there is simply nothing to check it against.',
+        }
+      : withSignerCheck(verifyCertificate(found.report, found.certificate), found.certificate);
 
     res.json({
       reportId: found.id,
+      signed: !unsigned,
       ...result,
-      target: found.certificate?.target,
-      verdict: found.certificate?.verdict,
-      score: found.certificate?.score,
-      meaning: result.valid && result.signedByStressProof
-        ? 'This report has not been altered since we signed it.'
-        : 'Do not trust this report. ' + (result.reason ?? 'It failed verification.'),
+      target: found.certificate?.target ?? found.report?.target,
+      verdict: found.certificate?.verdict ?? found.report?.verdict,
+      score: found.certificate?.score ?? found.report?.score,
+      meaning: unsigned
+        ? 'Unsigned, so it cannot be checked. Take it as an unverified claim rather than as evidence.'
+        : result.valid && result.signedByStressProof
+          ? 'This report has not been altered since we signed it.'
+          : 'Do not trust this report. ' + (result.reason ?? 'It failed verification.'),
       checkItYourself: {
         report: `GET /reports/${found.id}`,
         method: 'POST the report and certificate to /verify from anywhere, or recover the signer from the EIP-712 signature with any library. You do not have to take our word for any of this.',
@@ -302,6 +329,18 @@ export function createApp({ demoAllowlist = [], payment = createPaymentGate() } 
     const found = reports.get(req.params.id);
     if (!found) return res.status(404).json({ error: 'unknown report id' });
     res.json(found);
+  });
+
+  // --- the honesty table, served rather than filed away --------------------
+  //
+  // This document is the product's main claim about itself: what is real, what
+  // is narrower than its name suggests, and what was never built. Keeping it
+  // in the repo where only a reader who clones the code would find it would
+  // undercut the point of writing it.
+  app.get('/honesty', (_req, res) => {
+    readFile(path.join(__dirname, '..', 'docs', 'REAL_VS_SIMPLIFIED.md'), 'utf8')
+      .then((text) => res.type('text/plain; charset=utf-8').send(text))
+      .catch(() => res.status(404).json({ error: 'the honesty table is not available on this deployment' }));
   });
 
   app.get('/health', (_req, res) => res.json({ ok: true, reports: reports.size }));
@@ -352,7 +391,18 @@ async function storeReport(run) {
   const certificate = await signReport(report);
   const explanation = await explainVerdict(report);
   const id = certificate?.reportHash?.slice(2, 18) ?? Math.random().toString(16).slice(2, 18);
-  const stored = { id, report, certificate, explanation };
+
+  // A null explanation is never left unlabelled. "Switched off", "the model
+  // failed just now" and "nothing to say" all look the same from outside, and
+  // a reader who cannot tell them apart will assume the feature is broken.
+  const status = explainerStatus();
+  const explanationUnavailable = explanation
+    ? null
+    : status.configured
+      ? 'the explanation model did not answer in time, so this report carries evidence and a verdict without a summary. Nothing about the verdict changes.'
+      : status.reason;
+
+  const stored = { id, report, certificate, explanation, explanationUnavailable };
   reports.set(id, stored);
   return stored;
 }

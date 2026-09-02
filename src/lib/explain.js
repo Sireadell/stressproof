@@ -84,4 +84,25 @@ export async function explainVerdict(report, { apiKey = process.env.GROQ_API_KEY
   }
 }
 
-export { evidenceFor, SYSTEM_PROMPT };
+/**
+ * Whether this deployment can explain anything at all, and why not if it
+ * cannot.
+ *
+ * Silence is the right failure mode for the explainer, but silence with no
+ * label is ambiguous in a way that matters: a report with no explanation looks
+ * identical whether the feature is switched off, the model timed out, or there
+ * was genuinely nothing to say. A reader who cannot tell those apart will
+ * assume the worst one. This is what lets the report say which it was.
+ */
+export function explainerStatus({ apiKey = process.env.GROQ_API_KEY } = {}) {
+  if (!apiKey) {
+    return {
+      configured: false,
+      reason:
+        'no explanation model is configured on this deployment, so reports carry evidence and a verdict but no plain-English summary. The verdict is unaffected: it is computed before the explainer runs and never reads its output.',
+    };
+  }
+  return { configured: true, model: MODEL, reason: null };
+}
+
+export { evidenceFor, SYSTEM_PROMPT, MODEL };

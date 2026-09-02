@@ -230,3 +230,71 @@ test('the free demo stops the same caller after a few runs', async () => {
   }
   assert.ok(sawLimit, 'an open route with no ceiling is an abuse vector');
 });
+
+test('the honesty table is served, not just filed in the repo', async () => {
+  const res = await fetch(base + '/honesty');
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type') ?? '', /text\/plain/);
+  const text = await res.text();
+  // The three status words are the whole point of the document. If any of
+  // them has gone missing, it has stopped being an honesty table.
+  assert.match(text, /Real/);
+  assert.match(text, /Simplified/);
+  assert.match(text, /Not built/);
+});
+
+test('/about says whether the explainer is switched on', async () => {
+  const { body } = await req('GET', '/about');
+  assert.equal(typeof body.explainer.available, 'boolean');
+  assert.ok(body.explainer.note, 'an unexplained absence reads as a broken feature');
+});
+
+test('a report with no explanation says why, rather than leaving a blank', async () => {
+  // No explanation model is configured in the test environment, so this is
+  // the real unconfigured path rather than a simulated one.
+  assert.equal(honestRun.explanation, null);
+  assert.match(honestRun.explanationUnavailable, /no explanation model is configured/);
+  // The important half: a missing summary must not read as a missing verdict.
+  assert.match(honestRun.explanationUnavailable, /verdict is unaffected/i);
+  assert.equal(honestRun.report.verdict, 'RESILIENT');
+});
+
+test('an unsigned report is reported as unsigned, not as untrustworthy', async () => {
+  // The failure this guards against is the product contradicting its own
+  // pitch. A deployment with no signing key produces reports with no
+  // certificate. Running those through the tamper check answers "no
+  // certificate supplied", and worded as a verdict that reads "do not trust
+  // this report" about a report that is perfectly sound.
+  const app = createApp({ payment: createPaymentGate({ env: { STRESSPROOF_PAYMENT: 'off' } }) });
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise((resolve) => server.once('listening', resolve));
+  const local = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    // Take a real stored report and strip its certificate, which is exactly
+    // the shape a keyless deployment produces.
+    const { reports } = await import('../src/expressApp.js');
+    const stored = reports.get(honestRun.id);
+    assert.ok(stored, 'the shared run should still be in the store');
+    const saved = stored.certificate;
+    stored.certificate = null;
+
+    try {
+      const res = await fetch(`${local}/verify/${honestRun.id}`);
+      const body = await res.json();
+      assert.equal(res.status, 200);
+      assert.equal(body.signed, false);
+      assert.equal(body.valid, null, 'unsigned is neither valid nor invalid');
+      assert.doesNotMatch(body.meaning, /Do not trust/i);
+      assert.match(body.reason, /never signed/i);
+      assert.match(body.reason, /not a sign of tampering/i);
+      // The verdict still has to come through, or an unsigned report becomes
+      // unreadable as well as uncheckable.
+      assert.equal(body.verdict, 'RESILIENT');
+    } finally {
+      stored.certificate = saved;
+    }
+  } finally {
+    server.close();
+  }
+});

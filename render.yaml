@@ -1,0 +1,59 @@
+# Render deployment.
+#
+# Every secret is marked sync:false, which means Render prompts for it rather
+# than reading it from this file. None of them belong in a public repo, and two
+# of them change what the service will DO if they go missing:
+#
+#   STRESSPROOF_PAY_TO      missing -> paid runs refuse with a 503.
+#                           They do not silently become free. See paymentGate.js.
+#   STRESSPROOF_SIGNER_...  missing -> reports go out unsigned rather than
+#                           falsely signed. See attestation.js.
+#   GROQ_API_KEY            missing -> reports carry no plain-English summary.
+#                           The verdict is computed before the explainer runs
+#                           and never reads its output, so nothing else changes.
+#
+# All three degrade loudly: /about reports which of them are configured, so a
+# half-deployed service is visible from outside rather than only in the logs.
+
+services:
+  - type: web
+    name: stressproof
+    runtime: node
+    plan: starter
+    region: oregon
+    branch: master
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 22.23.2
+
+      # --- payment ---------------------------------------------------------
+      # The wallet that receives 0.25 USDC per certification run.
+      - key: STRESSPROOF_PAY_TO
+        sync: false
+      # Leave unset for Base mainnet. Set to "sepolia" to fall back to testnet,
+      # which flips network, token and EIP-712 domain together so a
+      # half-switched state is not expressible.
+      - key: STRESSPROOF_NETWORK
+        sync: false
+      # xpay (default) settles both Base mainnet and Base Sepolia.
+      - key: STRESSPROOF_FACILITATOR
+        value: xpay
+
+      # --- signing ---------------------------------------------------------
+      # Signs every report. The matching public address is published at /about
+      # so anyone can verify a certificate without trusting this service.
+      - key: STRESSPROOF_SIGNER_PRIVATE_KEY
+        sync: false
+
+      # --- explainer -------------------------------------------------------
+      - key: GROQ_API_KEY
+        sync: false
+
+      # --- free demo -------------------------------------------------------
+      # Comma-separated URL prefixes allowed on the free route, on top of our
+      # own hosted demo agent. Only add a target whose owner has agreed.
+      - key: STRESSPROOF_DEMO_ALLOWLIST
+        sync: false

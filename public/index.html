@@ -78,6 +78,12 @@
       response to input it should have rejected" is a fixed check on an HTTP
       response, and two people running it get the same answer.
     </p>
+    <p class="muted" style="margin:12px 0 0">
+      <strong>226 tests</strong> across 14 files, all passing. Most of them are
+      about <em>not</em> convicting an honest agent, because a certifier that
+      accuses the innocent is worse than no certifier. Count it yourself with
+      <code>npm test</code> in the repo.
+    </p>
   </div>
 
   <h2>Try it</h2>
@@ -122,8 +128,42 @@
         control a target means publishing a one-time code at its own address.
         Some hosting platforms will not allow that, and those agents are out of
         scope rather than quietly waved through.</li>
+      <li><strong>A run bills even if your agent turns out to be offline.</strong>
+        What you pay for is the probing, not a good verdict. An unreachable
+        target gets an INCONCLUSIVE report and still costs $0.25.</li>
+      <li><strong>Reports are held in memory, so a restart drops them.</strong>
+        That loses nothing you cannot check yourself: if you saved the report
+        and its certificate, they still verify from anywhere, without us.</li>
     </ul>
+    <p class="muted" style="margin-bottom:0">
+      The full version of this, including what is real, what is narrower than
+      its name suggests, and what was never built, is served straight from the
+      repo at <a href="/honesty">/honesty</a>. It has been updated every day of
+      the build rather than written at the end.
+    </p>
   </div>
+
+  <h2>Three commands, start to finish</h2>
+  <p class="muted">
+    Nothing to install and no wallet needed for the first one. Every response
+    below is JSON, and every claim in it is checkable without trusting us.
+  </p>
+  <pre># 1. certify a demo agent we host, free, and get a signed report back
+curl -s -X POST https://stressproof.dev/demo/certify \
+  -H 'content-type: application/json' \
+  -d '{"demoMode":"sloppy"}'
+
+# 2. confirm that report has not been altered since we signed it
+curl -s https://stressproof.dev/verify/REPORT_ID_FROM_STEP_1
+
+# 3. read what this service will and will not claim about itself
+curl -s https://stressproof.dev/about</pre>
+  <p class="muted">
+    Step 2 answers two separate questions on purpose. <code>valid</code> means
+    the report still matches its signature. <code>signedByStressProof</code>
+    means that signature is ours. A forged certificate can satisfy the first
+    and fail the second.
+  </p>
 
   <h2>How a verdict is decided</h2>
   <div class="scroll">

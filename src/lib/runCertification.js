@@ -122,6 +122,28 @@ export async function runCertification(target, opts = {}) {
  * should not be republishing on its behalf. The findings and outcomes carry
  * the evidence; the bodies were only ever the means of getting it.
  */
+/**
+ * The probe counts, in a sentence, so nobody has to infer what they mean.
+ *
+ * The distinction that keeps getting lost: a probe that ran but could not
+ * reach a firm conclusion is neither a pass nor a failure. Counting it as
+ * either would be the exact dishonesty this product exists to measure.
+ */
+function summariseProbeCounts(run) {
+  const total = run.breakdown?.length ?? 0;
+  const parts = [`All ${total} probes ran.`];
+  parts.push(`${run.probesCompleted} reached a conclusion firm enough to score.`);
+  if (run.unclassifiedCount > 0) {
+    parts.push(
+      `${run.unclassifiedCount} could not be judged from outside the API and are reported as unclear, not as failures.`,
+    );
+  }
+  if (run.notApplicable > 0) {
+    parts.push(`${run.notApplicable} did not apply to this target.`);
+  }
+  return parts.join(' ');
+}
+
 export function toReport(run) {
   return {
     target: run.target,
@@ -130,6 +152,12 @@ export function toReport(run) {
     score: run.score,
     probesCompleted: run.probesCompleted,
     probesScorable: run.probesScorable,
+    // Said in words because the numbers alone are read wrongly. Seeing
+    // "6 of 12" next to a verdict, a reader concludes half the test failed to
+    // run. Every probe runs; what varies is how many of them reach a
+    // conclusion firm enough to score, and an unclear result is deliberately
+    // not counted as a failure.
+    probesRunSummary: summariseProbeCounts(run),
     silentWrongCount: run.silentWrongCount,
     unclassifiedCount: run.unclassifiedCount,
     notApplicable: run.notApplicable,

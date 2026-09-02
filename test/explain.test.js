@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { explainVerdict, evidenceFor } from '../src/lib/explain.js';
+import { explainVerdict, evidenceFor, explainerStatus } from '../src/lib/explain.js';
 import { scoreRun } from '../src/lib/scoring.js';
 
 const REPORT = {
@@ -76,4 +76,17 @@ test('the explainer cannot alter a verdict, whatever it returns', async () => {
 
   const after = scoreRun(observations);
   assert.deepEqual(after, before, 'the verdict must be identical before and after the model ran');
+});
+
+test('the explainer says whether it is switched on, so silence is never ambiguous', () => {
+  const off = explainerStatus({ apiKey: undefined });
+  assert.equal(off.configured, false);
+  // The label has to make clear that a missing summary is not a missing
+  // verdict, or a reader will assume the whole report is degraded.
+  assert.match(off.reason, /verdict is unaffected/i);
+
+  const on = explainerStatus({ apiKey: 'test-key' });
+  assert.equal(on.configured, true);
+  assert.equal(on.reason, null);
+  assert.ok(on.model, 'a configured explainer must name the model it uses');
 });

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "StressProof — black-box resilience certification for AI agents. Fires fixed failure conditions at an agent's public API and scores whether it fails honestly or lies quietly.",
+  "description": "StressProof: black-box resilience certification for AI agents. Fires fixed failure conditions at an agent's public API and scores whether it fails honestly or lies quietly.",
   "main": "src/index.js",
   "scripts": {
     "dev": "node --watch src/index.js",
@@ -17,5 +17,8 @@
     "ethers": "^6.17.0",
     "express": "^4.19.2",
     "ipaddr.js": "^2.5.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
   }
 }
