@@ -19,6 +19,9 @@ the end.
 | Connection pinned to the checked address | **Real** | The validated address is the one connected to, so a hostname cannot resolve to something safe during the check and something private during the connection |
 | Redirects never followed | **Real** | A redirect is a destination that never passed the check. Captured and reported, never followed |
 | Consent challenge flow | **Real** | One-time code, 15-minute expiry, bound to payer wallet + exact target URL. 18 tests covering stale codes, wrong payer, wrong endpoint, replay and expiry |
+| Standing consent for recurring checks | **Real** | Opt-in second mode for unattended re-certification. One published file authorises one wallet to certify one exact URL, with an expiry date the owner sets and a maximum frequency the owner sets. All five fields are re-fetched and re-checked before every single run, so deleting the file stops the next run. 23 tests, including that a one-time file is never read as standing consent and the reverse |
+| Standing permission capped at 30 days | **Real** | A ceiling applied regardless of what the file claims. A file claiming a longer life is refused outright rather than quietly shortened, so renewing the file is a recurring, if weak, proof that somebody still controls the origin. The constant is in `spec.js` as `CONSENT_POLICY`, deliberately outside the scoring fingerprint, because a permission window cannot move a single point on a single probe and pretending otherwise would invalidate every report ever issued |
+| Owner-set testing frequency | **Real** | The consent file states the shortest gap the owner is willing to be tested at. It applies alongside StressProof's own 15-minute per-target cooldown, whichever is stricter wins, and the refusal names which of the two stopped the run so an owner is never sent to edit a file that was not the problem |
 | Per-target cooldown | **Simplified** | Enforced, and enforced across payers so paying repeatedly is not unlimited flooding, but held in memory, so a restart clears it. This matters more on the deployed service than it reads: the free hosting plan sleeps after 15 minutes without traffic, so in practice the cooldown is cleared often rather than rarely. A determined caller who waits out the idle window gets a fresh cooldown. The 30-request cap per run is unaffected, being fixed in the spec rather than counted at runtime |
 | All 12 probes implemented | **Real** | 54 probe tests against a live local fixture in five behavioural modes. Every probe observes only — none decides an outcome |
 | Injection probe's false-accusation defence | **Real** | The `echoer` fixture (a correct agent that quotes bad input back) lands 6 techniques but every matching control echoes too, so it is not convicted. A genuinely compromised stub is caught on all 6 with all controls silent |
@@ -67,6 +70,21 @@ These are properties of the design, not bugs to be fixed later.
   and those targets are simply out of scope. Accepting weaker proof would make
   the permission check decorative, and a tool that sends traffic at strangers
   does not get to have a decorative permission check.
+- **Standing consent proves the file is still being served, not that a human
+  meant it today.** The one-time code proved somebody controlled the origin
+  within the last fifteen minutes. Standing consent proves the origin is still
+  serving the permission right now, which stops a deleted or edited file dead
+  on the next run, and it proves nothing about whether anyone has thought about
+  it since they published it. A file left up and forgotten keeps authorising
+  runs until its expiry date, up to thirty days. Anyone who can write files at
+  that origin, through a compromised deploy pipeline, a stale build that
+  redeploys an old copy, or a subdomain takeover, inherits the permission for
+  the rest of that window. This is a real widening of the challenge flow's
+  fifteen-minute exposure and it is the price of unattended re-certification,
+  accepted knowingly rather than overlooked.
+- **Revocation is only as fast as the origin's own caching.** We ask for the
+  consent file with no-cache headers before every run. A CDN that keeps serving
+  a deleted file is still consenting on the owner's behalf, and we cannot tell.
 - **The per-target cooldown does not survive a restart.** It lives in memory
   today. A deliberate attacker who could force a restart could shorten the gap
   between runs; the 30-request per-run cap still holds regardless.

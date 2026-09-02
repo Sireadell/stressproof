@@ -20,12 +20,12 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 
-import { issueChallenge, verifyChallenge } from './lib/consent.js';
+import { issueChallenge, issueStandingRun, verifyConsent, CONSENT_MODE } from './lib/consent.js';
 import { runCertification, toReport } from './lib/runCertification.js';
 import { signReport, verifyCertificate, getSignerAddress } from './lib/attestation.js';
 import { resolvePaymentConfig, buildCertifyPaymentOption, RUN_PRICE_USDC } from './lib/payment.js';
 import { createPaymentGate, readPayerFromRequest, paymentMatchesConsent } from './lib/paymentGate.js';
-import { MAX_REQUESTS_PER_RUN, PROBE_ORDER, CANARY_TOKEN } from './lib/spec.js';
+import { MAX_REQUESTS_PER_RUN, PROBE_ORDER, CANARY_TOKEN, CONSENT_POLICY } from './lib/spec.js';
 import { explainVerdict, explainerStatus } from './lib/explain.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -143,6 +143,18 @@ export function createApp({ demoAllowlist = [], payment = createPaymentGate() } 
             'Describes an already-decided verdict in plain English. It never sees the scoring rules and cannot change a verdict. On any failure it stays silent rather than inventing one.',
         };
       })(),
+      // Said here rather than left to be discovered, because a scheduler
+      // deciding whether unattended re-certification is possible at all needs
+      // to know the second mode exists before it writes any code.
+      consent: {
+        modes: Object.values(CONSENT_MODE),
+        default: CONSENT_MODE.CHALLENGE,
+        standing: {
+          askFor: "POST /runs with consentMode: 'standing'",
+          maxPermissionDays: Math.round(CONSENT_POLICY.STANDING_CONSENT_MAX_LIFETIME_MS / 86_400_000),
+          note: 'The permission file is re-fetched and fully re-checked before every run. Deleting it stops the next run, and it expires on a date you publish.',
+        },
+      },
       signerAddress: getSignerAddress(),
       canaryToken: CANARY_TOKEN, // published on purpose: see the page
       limitations: [
@@ -158,9 +170,25 @@ export function createApp({ demoAllowlist = [], payment = createPaymentGate() } 
     const invalid = validateTargetInput(req.body);
     if (invalid) return res.status(400).json({ error: invalid });
 
-    const { targetUrl, payerAddress } = req.body;
-    const result = await issueChallenge({ targetUrl, payerAddress });
-    if (!result.ok) return res.status(400).json({ error: result.reason, retryAfterMs: result.retryAfterMs });
+    const { targetUrl, payerAddress, consentMode } = req.body;
+
+    // Standing consent has to be asked for by name. Defaulting to it, or
+    // inferring it from the shape of the request, would mean a caller could
+    // end up on the long-lived permission without ever choosing it.
+    if (consentMode !== undefined && !Object.values(CONSENT_MODE).includes(consentMode)) {
+      return res.status(400).json({
+        error: `unknown consentMode '${consentMode}'`,
+        allowed: Object.values(CONSENT_MODE),
+      });
+    }
+
+    const result =
+      consentMode === CONSENT_MODE.STANDING
+        ? await issueStandingRun({ targetUrl, payerAddress })
+        : await issueChallenge({ targetUrl, payerAddress });
+    if (!result.ok) {
+      return res.status(400).json({ error: result.reason, retryAfterMs: result.retryAfterMs, limitHit: result.limitHit });
+    }
 
     // Hold the run's inputs until it starts. The consent module owns the
     // permission side; this owns what to actually send.
@@ -186,8 +214,13 @@ export function createApp({ demoAllowlist = [], payment = createPaymentGate() } 
     const target = pendingTargets.get(req.params.runId);
     if (!target) return res.status(404).json({ error: 'unknown run id' });
 
-    const consent = await verifyChallenge({ runId: req.params.runId });
-    if (!consent.ok) return res.status(403).json({ error: consent.reason });
+    // Dispatches on the mode the run was issued under. A run's permission
+    // mode is fixed when it is created, so a caller cannot ask for a one-time
+    // run and then satisfy it with a standing file, or the reverse.
+    const consent = await verifyConsent({ runId: req.params.runId });
+    if (!consent.ok) {
+      return res.status(403).json({ error: consent.reason, retryAfterMs: consent.retryAfterMs, limitHit: consent.limitHit });
+    }
 
     // Payment proves a wallet spent money. Consent proves a wallet controls
     // the target. Neither is worth much unless they are the same wallet: if

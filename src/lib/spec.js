@@ -177,6 +177,46 @@ export const THRESHOLDS = Object.freeze({
 });
 
 /**
+ * STANDING CONSENT POLICY, AND WHY IT IS NOT IN THE FINGERPRINT.
+ *
+ * These numbers govern whether a run is allowed to happen. They have no say in
+ * what a run scores once it does. The fingerprint at the bottom of this file
+ * exists for one purpose, stated there: so that two reports carrying the same
+ * stamp were produced by the same test, and a threshold that moved cannot be
+ * misread by Halflife as an agent that got worse. A permission window is not a
+ * test input. Tightening it from 30 days to 7 would not move a single point on
+ * a single probe, so folding it into SCORING_INPUTS would invalidate every
+ * report ever issued and force Halflife to throw away real history in exchange
+ * for nothing. That is a worse outcome than an incomplete fingerprint, because
+ * the cost of a false version change is paid in lost comparisons and the cost
+ * of omitting a non-scoring constant is zero.
+ *
+ * The honest wrinkle: CONSENT_CHALLENGE_TTL_MS, CONSENT_FILE_MAX_BYTES and
+ * MIN_MS_BETWEEN_RUNS_PER_TARGET are already inside THRESHOLDS, and by the
+ * argument above they do not belong there either. They are left where they are
+ * on purpose. Moving them out would change SPEC_VERSION, which is exactly the
+ * false version change this reasoning is trying to avoid, and it would buy
+ * nothing but tidiness. The rule going forward is the one applied here: a
+ * constant that cannot change a score does not enter the fingerprint.
+ */
+export const CONSENT_POLICY = Object.freeze({
+  /**
+   * Longest remaining life a standing consent file may claim, counted from
+   * now rather than from when it was written.
+   *
+   * 30 days because that is the longest re-check interval anything downstream
+   * actually uses (Halflife re-checks a LOW risk agent every 30 days), so a
+   * renewal never has to happen more often than the loosest checking cycle it
+   * supports, and a file somebody published and forgot stops working inside a
+   * month rather than authorising traffic indefinitely. Enforced as a ceiling
+   * regardless of what the file says: a file claiming a date five years out is
+   * refused outright rather than quietly honoured or quietly clamped, because
+   * silently shortening somebody's stated intent is its own kind of lie.
+   */
+  STANDING_CONSENT_MAX_LIFETIME_MS: 30 * 24 * 60 * 60_000,
+});
+
+/**
  * The six outcomes a probe can produce, with their point values.
  *
  * UNCLASSIFIED is the one that matters most. Without it, an ambiguous

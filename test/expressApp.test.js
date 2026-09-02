@@ -102,6 +102,28 @@ test('a run request with an unsupported method is refused by name', async () => 
   assert.match(body.error, /DELETE/);
 });
 
+test('an unrecognised consent mode is refused by name rather than silently defaulted', async () => {
+  // Silently falling back would be dangerous in either direction: a caller who
+  // typed "standng" would get a one-time code they cannot use, or worse, a
+  // caller who meant one-time would land on the long-lived permission without
+  // ever having asked for it.
+  const { status, body } = await req('POST', '/runs', {
+    targetUrl: 'https://example.com/agent',
+    sampleBody: { query: 'hi' },
+    consentMode: 'permanent',
+  });
+  assert.equal(status, 400);
+  assert.match(body.error, /permanent/);
+  assert.deepEqual(body.allowed, ['challenge', 'standing']);
+});
+
+test('/about names both consent modes and says which is the default', async () => {
+  const { body } = await req('GET', '/about');
+  assert.deepEqual(body.consent.modes, ['challenge', 'standing']);
+  assert.equal(body.consent.default, 'challenge');
+  assert.equal(body.consent.standing.maxPermissionDays, 30);
+});
+
 test('starting an unknown run id is a 404, not a crash', async () => {
   const { status, body } = await req('POST', '/runs/does-not-exist/start');
   assert.equal(status, 404);
