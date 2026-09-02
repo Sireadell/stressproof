@@ -19,7 +19,15 @@ services:
   - type: web
     name: stressproof
     runtime: node
-    plan: starter
+    # Free plan. It sleeps after 15 minutes with no traffic and takes about a
+    # minute to wake, so the first request after a quiet spell is slow. That is
+    # a property of the hosting, not of the service: a woken instance behaves
+    # identically. Render also grants 750 free instance hours per WORKSPACE per
+    # month and suspends every free service once they are gone, which is why
+    # this is not pinged awake around the clock. Switch to `starter` for any
+    # window where a cold start would be read as a broken product; billing is
+    # prorated to the second, so that costs cents rather than a month.
+    plan: free
     region: oregon
     branch: master
     buildCommand: npm ci

@@ -15,7 +15,7 @@
 //      throws is recorded as unmeasured and the run continues — a single
 //      unlucky request must not destroy eleven good observations.
 
-import { PROBE_ORDER, REQUEST_BUDGET, MAX_REQUESTS_PER_RUN } from './spec.js';
+import { PROBE_ORDER, REQUEST_BUDGET, MAX_REQUESTS_PER_RUN, SPEC_VERSION } from './spec.js';
 import { scoreRun } from './scoring.js';
 import { emptyObservation } from './probeContract.js';
 
@@ -152,6 +152,12 @@ function summariseProbeCounts(run) {
 export function toReport(run) {
   return {
     target: run.target,
+    // Which test produced this. Without it two reports look comparable whether
+    // or not the same probes and thresholds produced them, and anyone holding
+    // an old report next to a new one could read a change in the TEST as a
+    // change in the agent. Derived from the spec's own numbers, so it cannot go
+    // stale when a threshold moves.
+    specVersion: SPEC_VERSION,
     verdict: run.verdict,
     verdictReason: run.verdictReason,
     score: run.score,

@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 
 import { runCertification, toReport } from '../src/lib/runCertification.js';
 import { createFakeAgent, fixtureTarget } from './fixtures/fakeAgent.js';
-import { MAX_REQUESTS_PER_RUN } from '../src/lib/spec.js';
+import { MAX_REQUESTS_PER_RUN, SPEC_VERSION } from '../src/lib/spec.js';
 import { signReport, verifyCertificate } from '../src/lib/attestation.js';
 import { Wallet } from 'ethers';
 
@@ -137,4 +137,25 @@ test('the published report carries evidence but not the target\'s raw responses'
   const serialised = JSON.stringify(report);
   assert.ok(!serialised.includes('"responses"'), 'raw responses must not reach the published report');
   assert.ok(report.probes.every((p) => p.findings), 'every probe must still carry its findings');
+});
+
+test('every published report says which version of the test produced it', async () => {
+  // Halflife compares a remembered verdict against a fresh one and revokes on
+  // a fall. Without this stamp a moved threshold would look like an agent that
+  // got worse, and an agent that did nothing wrong would be accused.
+  const report = toReport(await certify('honest'));
+  assert.equal(report.specVersion, SPEC_VERSION);
+  assert.match(report.specVersion, /^sp1-[0-9a-f]{12}$/);
+});
+
+test('the spec version is inside what the certificate signs', async () => {
+  // The signature covers the whole report body by hash, so swapping the
+  // version out of a signed report has to break verification. Otherwise a
+  // report could be re-labelled as having come from a different test.
+  const run = await certify('sloppy');
+  const report = toReport(run);
+  const signer = new Wallet('0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d');
+  const cert = await signReport(report, { signer });
+  assert.equal(verifyCertificate(report, cert).valid, true);
+  assert.equal(verifyCertificate({ ...report, specVersion: 'sp1-000000000000' }, cert).valid, false);
 });

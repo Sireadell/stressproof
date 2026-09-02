@@ -22,6 +22,9 @@ import {
   MIN_COMPLETED_FAMILIES,
   PROBE_FAMILIES,
   FAMILIES_FOR_TOP_VERDICT,
+  SPEC_VERSION,
+  SCORING_INPUTS,
+  specFingerprint,
 } from '../src/lib/spec.js';
 
 test('request budget sums to exactly the published cap', () => {
@@ -208,4 +211,42 @@ test('injection budget covers 6 disguised probes plus one control per carrier sh
   const TECHNIQUES = 6;
   const CARRIER_SHAPE_CONTROLS = 4;
   assert.equal(REQUEST_BUDGET.injection_canary, TECHNIQUES + CARRIER_SHAPE_CONTROLS);
+});
+
+test('the spec version is stable for an unchanged spec', () => {
+  // A version that moved on its own would be worse than none: every stored
+  // report would stop being comparable with a fresh one for no reason.
+  assert.equal(SPEC_VERSION, `sp1-${specFingerprint(SCORING_INPUTS)}`);
+  assert.equal(specFingerprint(SCORING_INPUTS), specFingerprint(structuredClone(SCORING_INPUTS)));
+  assert.match(SPEC_VERSION, /^sp1-[0-9a-f]{12}$/);
+});
+
+test('the spec version does not depend on the order keys happen to be written in', () => {
+  // Two Node versions are not obliged to agree on object key order forever,
+  // and a version that changed with the runtime would quietly void every
+  // comparison anybody had stored.
+  const reordered = Object.fromEntries(Object.entries(SCORING_INPUTS).reverse());
+  assert.equal(specFingerprint(reordered), specFingerprint(SCORING_INPUTS));
+});
+
+test('moving any threshold changes the spec version without anyone bumping it', () => {
+  // The reason the version is derived rather than typed. The request-budget
+  // bug at the top of spec.js survived two reviews because nobody added the
+  // numbers up; a version somebody has to remember to update would fail the
+  // same way, and would make two different tests look identical.
+  const movedThreshold = {
+    ...SCORING_INPUTS,
+    THRESHOLDS: { ...THRESHOLDS, RATE_FLOOD_MIN_SPIKE_MS: THRESHOLDS.RATE_FLOOD_MIN_SPIKE_MS + 1 },
+  };
+  assert.notEqual(specFingerprint(movedThreshold), specFingerprint(SCORING_INPUTS));
+
+  const movedBand = { ...SCORING_INPUTS, BANDS: { ...BANDS, RESILIENT_MIN: BANDS.RESILIENT_MIN + 1 } };
+  assert.notEqual(specFingerprint(movedBand), specFingerprint(SCORING_INPUTS));
+
+  const reorderedProbes = { ...SCORING_INPUTS, PROBE_ORDER: [...PROBE_ORDER].reverse() };
+  assert.notEqual(
+    specFingerprint(reorderedProbes),
+    specFingerprint(SCORING_INPUTS),
+    'probe order is meaningful in sequence and must count toward the version',
+  );
 });

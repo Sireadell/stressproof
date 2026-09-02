@@ -153,3 +153,22 @@ honest agent rejects it.
   needed conversation memory this tool does not have (it sends single
   requests); others collapsed into techniques already on the list once the
   payload was swapped for our own canary.
+
+## Test profile version
+
+Every report carries a `specVersion`, for example `sp1-49758d6ca7c8`. It says
+which version of this test produced the report.
+
+The digest is computed from the spec's own numbers: the probe list and its
+order, the per-probe request budget, every threshold, the outcome point values,
+the verdict bands, the evidence floors, and the canary token. Change any one of
+them and the digest changes on its own. Nobody has to remember to bump it, which
+is the point: a version somebody can forget to update is worse than no version,
+because it makes two different tests look identical.
+
+Two reports carrying the same `specVersion` were produced by the same test and
+can be compared. Two carrying different ones cannot, and anything comparing them
+has to say so rather than report the difference as a change in the agent.
+
+The `sp1` prefix is a fixed human label for this twelve-probe generation of the
+test. Nothing depends on it and it is not a number anyone maintains.
