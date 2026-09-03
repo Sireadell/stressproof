@@ -53,6 +53,13 @@ services:
       # --- signing ---------------------------------------------------------
       # Signs every report. The matching public address is published at /about
       # so anyone can verify a certificate without trusting this service.
+      #
+      # SET THIS ONE. Without it the service still runs and still certifies,
+      # but every report goes out unsigned, and the permanent certificate link
+      # then correctly answers "unsigned, so it cannot be checked", which is
+      # the whole demo answering that it cannot demonstrate itself. It holds no
+      # money and never signs a transaction, so it does not need a funded
+      # wallet: any freshly generated private key will do.
       - key: STRESSPROOF_SIGNER_PRIVATE_KEY
         sync: false
 

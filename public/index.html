@@ -131,9 +131,23 @@
       <li><strong>A run bills even if your agent turns out to be offline.</strong>
         What you pay for is the probing, not a good verdict. An unreachable
         target gets an INCONCLUSIVE report and still costs $0.25.</li>
-      <li><strong>Reports are held in memory, so a restart drops them.</strong>
-        That loses nothing you cannot check yourself: if you saved the report
-        and its certificate, they still verify from anywhere, without us.</li>
+      <li><strong>Report ids expire when this service sleeps, and the
+        permanent link does not.</strong> We run on a free plan that shuts the
+        service down after fifteen minutes without traffic, which drops every
+        report held in memory. So every report is also issued with a permanent
+        link that carries the whole report and its signature inside the URL. It
+        needs nothing from us, and it keeps working after a restart, after a
+        redeploy, and after this service is shut down for good. The price is
+        that the link is long, around 2,200 characters. It is built to be
+        clicked, not typed.</li>
+      <li><strong>The abuse ceilings are held in memory, so a restart clears
+        them.</strong> The free demo's daily budget and the fifteen-minute
+        per-target cooldown both reset when the service sleeps, so someone
+        patient gets a fresh allowance. The 30-request cap on a single run is
+        fixed in the spec and is not affected.</li>
+      <li><strong>The first request after a quiet spell takes about a
+        minute.</strong> That is the free hosting plan waking up, not the
+        service being slow. A woken instance behaves identically.</li>
     </ul>
     <p class="muted" style="margin-bottom:0">
       The full version of this, including what is real, what is narrower than
@@ -153,8 +167,11 @@ curl -s -X POST https://stressproof.dev/demo/certify \
   -H 'content-type: application/json' \
   -d '{"demoMode":"sloppy"}'
 
-# 2. confirm that report has not been altered since we signed it
-curl -s https://stressproof.dev/verify/REPORT_ID_FROM_STEP_1
+# 2. confirm that report has not been altered since we signed it.
+#    Step 1 hands back permanentUrl. Open it. Everything needed to check the
+#    certificate is inside that URL, so it answers even when we have forgotten
+#    the report, and even if this service is gone.
+curl -s "PERMANENT_URL_FROM_STEP_1"
 
 # 3. read what this service will and will not claim about itself
 curl -s https://stressproof.dev/about</pre>
@@ -201,7 +218,12 @@ curl -s https://stressproof.dev/about</pre>
   </p>
   <pre>curl -s https://stressproof.dev/about
 
-# check a report we are serving, by its id
+# the permanent link. Carries the report and the signature in the URL itself,
+# so there is nothing for us to have lost, and nothing for us to lie about.
+curl -s "https://stressproof.dev/c/PERMANENT_TOKEN"
+
+# a shortcut while the report is still in memory. Honest about being temporary:
+# when it 404s it says so, and points at the permanent link.
 curl -s https://stressproof.dev/verify/REPORT_ID
 
 # or check a copy you saved, from anywhere, without asking us for it

@@ -320,3 +320,199 @@ test('an unsigned report is reported as unsigned, not as untrustworthy', async (
     server.close();
   }
 });
+
+// --- the permanent certificate link ---------------------------------------
+//
+// The failure these guard against is the one that would have made the whole
+// product look broken in front of a judge: the free hosting plan spins the
+// process down after 15 quiet minutes, which drops every stored report, and
+// every certificate link ever issued would then answer 404.
+//
+// So the test that matters is not "does the link work", it is "does the link
+// work when the server has forgotten everything". That is what is simulated
+// below by clearing the store outright before following the link.
+
+test('every report is issued with a permanent link, absolute and clickable', async () => {
+  assert.ok(honestRun.permanentLink, 'a report with no durable link is a link that dies on the next restart');
+  assert.ok(honestRun.permanentLink.startsWith('/c/'));
+  assert.ok(
+    honestRun.permanentUrl.startsWith(base + '/c/'),
+    `expected an absolute link on the host the caller used, got ${honestRun.permanentUrl}`,
+  );
+  // Nobody should have to guess why a URL that long is a good thing.
+  assert.match(honestRun.permanentLinkNote, /inside the URL/);
+  assert.equal(honestRun.permanentLinkUnavailable, null);
+});
+
+test('the permanent link still verifies after the server has forgotten every report', async () => {
+  const { reports } = await import('../src/expressApp.js');
+  const snapshot = new Map(reports);
+  // Exactly what a spin-down does: the process comes back with an empty store.
+  reports.clear();
+
+  try {
+    // The id route is now dead, which is the honest state of affairs.
+    const byId = await req('GET', `/verify/${honestRun.id}`);
+    assert.equal(byId.status, 404, 'a report id is a pointer into memory and must admit it when memory is gone');
+
+    // The link is not, because it never depended on memory.
+    const res = await fetch(honestRun.permanentUrl);
+    const body = await res.json();
+    assert.equal(res.status, 200);
+    assert.equal(body.valid, true, body.reason);
+    assert.equal(body.signedByStressProof, true);
+    assert.equal(body.verdict, 'RESILIENT');
+    assert.match(body.meaning, /has not been altered/);
+    // The evidence has to travel with the verdict. A surviving verdict with no
+    // surviving report would be exactly the unbacked claim this product objects to.
+    assert.deepEqual(body.report, honestRun.report);
+    assert.match(body.source, /read from the link itself/);
+    // No id, because there is no stored thing for one to point at.
+    assert.equal(body.reportId, null);
+  } finally {
+    for (const [k, v] of snapshot) reports.set(k, v);
+  }
+});
+
+test('both verification routes give the same answer about the same report', async () => {
+  const byId = await req('GET', `/verify/${honestRun.id}`);
+  const byLink = await fetch(honestRun.permanentUrl).then((r) => r.json());
+
+  // Everything except where the bytes came from. A reader must not be able to
+  // get a friendlier verdict by choosing a different route.
+  for (const field of ['valid', 'signedByStressProof', 'signed', 'verdict', 'score', 'target', 'meaning']) {
+    assert.deepEqual(byLink[field], byId.body[field], `'${field}' differs between the two verification routes`);
+  }
+});
+
+test('a permanent link with an edited verdict is caught, not served', async () => {
+  const { encodeCertificateLink } = await import('../src/lib/certificateLink.js');
+  // The only forgery a link holder can actually attempt: change the report,
+  // keep the real certificate, re-encode. Nothing stored is consulted, so the
+  // signature is the entire defence, which is the point being tested.
+  const forged = encodeCertificateLink({
+    // Point the same clean verdict at a different agent, which is the version
+    // of this forgery that actually pays: reselling somebody else's pass.
+    report: { ...honestRun.report, target: 'https://not-the-agent-we-tested.example.com/api' },
+    certificate: honestRun.certificate,
+  });
+  assert.equal(forged.ok, true);
+
+  const res = await fetch(`${base}${forged.path}`);
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(body.valid, false);
+  assert.match(body.meaning, /Do not trust/);
+});
+
+test('a mangled permanent link explains itself rather than 404ing', async () => {
+  const res = await fetch(`${base}/c/sp1.notarealtoken`);
+  const body = await res.json();
+  assert.equal(res.status, 400);
+  assert.match(body.error, /damaged or incomplete|not part of one/);
+  // The distinction that matters: this is the link being wrong, not us having
+  // forgotten something. Those are two very different accusations.
+  assert.match(body.note, /not that we have forgotten anything/);
+});
+
+test('the unknown-id message points at the link that does not go stale', async () => {
+  const { body } = await req('GET', '/verify/0000000000000000');
+  assert.match(body.note, /permanent link/);
+});
+
+test('/about publishes which verification routes survive a restart and which do not', async () => {
+  const { body } = await req('GET', '/about');
+  assert.equal(body.verification.permanentLink, 'GET /c/<token>');
+  assert.ok(body.verification.stateDependent.includes('GET /verify/<reportId>'));
+  assert.match(body.verification.stateDependentNote, /spun down/);
+});
+
+// --- deployed behind a proxy ----------------------------------------------
+
+test('the free demo counts visitors separately behind a load balancer', async () => {
+  // WITHOUT `trust proxy`, this is the bug that kills the deployed demo. Every
+  // request arrives from the load balancer's address, so all visitors share one
+  // per-address bucket and the fourth person to ever try the demo is refused as
+  // a repeat offender. On a laptop there is no proxy and it looks perfect.
+  //
+  // The shared 127.0.0.1 bucket is already spent by the budget test above, so
+  // if these two forwarded visitors are being counted as that same caller they
+  // will be refused, and this test fails.
+  const demoAs = (forwardedFor) =>
+    fetch(base + '/demo/certify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': forwardedFor },
+      body: JSON.stringify({ demoMode: 'honest' }),
+    });
+
+  const first = await demoAs('203.0.113.7');
+  assert.equal(first.status, 200, 'a visitor behind the proxy was refused for somebody else`s runs');
+  const second = await demoAs('198.51.100.22');
+  assert.equal(second.status, 200, 'a second, different visitor was refused for the first one`s runs');
+});
+
+test('one visitor behind the proxy still hits the per-address ceiling', async () => {
+  // The other half of the same fix. Separating visitors must not remove the
+  // limit: an open route with no ceiling is the abuse vector the paid route
+  // exists to avoid.
+  const ip = '203.0.113.99';
+  let sawLimit = false;
+  for (let i = 0; i < 5 && !sawLimit; i += 1) {
+    const res = await fetch(base + '/demo/certify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': ip },
+      body: JSON.stringify({ demoMode: 'honest' }),
+    });
+    if (res.status === 429) sawLimit = true;
+  }
+  assert.ok(sawLimit, 'a forwarded visitor with no ceiling is an unlimited free run');
+});
+
+test('the in-memory shortcut is capped, because it is no longer what makes a report durable', async () => {
+  const { reports, MAX_HELD_REPORTS } = await import('../src/expressApp.js');
+  const snapshot = new Map(reports);
+
+  try {
+    // Fill it past the ceiling with placeholders, then do one real run and
+    // check the store pruned itself rather than growing forever on a 512MB box.
+    for (let i = 0; i < MAX_HELD_REPORTS + 50; i += 1) reports.set(`filler_${i}`, { id: `filler_${i}` });
+
+    const res = await fetch(base + '/demo/certify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': '198.51.100.77' },
+      body: JSON.stringify({ demoMode: 'honest' }),
+    });
+    const stored = await res.json();
+    assert.equal(res.status, 200);
+
+    assert.ok(reports.size <= MAX_HELD_REPORTS, `store held ${reports.size}, past the ${MAX_HELD_REPORTS} ceiling`);
+    // Oldest first: the newest report must be the one that survived.
+    assert.ok(reports.has(stored.id), 'eviction dropped the report it had just written');
+    assert.equal(reports.has('filler_0'), false, 'eviction should take the oldest first');
+    // And the evicted ones lost nothing that mattered, which is what makes
+    // evicting them acceptable at all.
+    const stillWorks = await fetch(stored.permanentUrl);
+    assert.equal(stillWorks.status, 200);
+  } finally {
+    reports.clear();
+    for (const [k, v] of snapshot) reports.set(k, v);
+  }
+});
+
+test('a real signed report packs into a link well under the ceiling we promise', async () => {
+  // The honesty table states a number, so a test has to hold it. This is the
+  // real thing: a full twelve-probe run, signed, encoded the way it is served.
+  const { MAX_TOKEN_CHARS } = await import('../src/lib/certificateLink.js');
+  const token = honestRun.permanentLink.slice('/c/'.length);
+  assert.ok(honestRun.certificate, 'this has to be a signed report to be a fair measurement');
+  assert.ok(
+    token.length < MAX_TOKEN_CHARS,
+    `a real report packed to ${token.length} chars, at or past the ${MAX_TOKEN_CHARS} ceiling`,
+  );
+  // The documented figure is "about 2,200". If a report ever doubles, the
+  // document is wrong and should be corrected rather than quietly outgrown.
+  assert.ok(
+    token.length < 4000,
+    `a real report packed to ${token.length} chars, which no longer matches the size the honesty table states`,
+  );
+});

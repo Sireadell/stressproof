@@ -4,6 +4,7 @@
 // any documentation:
 //   GET  /                      the page, explaining what this does and does not do
 //   POST /demo/certify          certify an allow-listed target, free, no wallet
+//   GET  /c/<token>             a certificate link that needs no server state
 //   POST /verify                check any signed report, without trusting us
 //
 // And the real flow, which requires proving you control the target:
@@ -27,11 +28,25 @@ import { resolvePaymentConfig, buildCertifyPaymentOption, RUN_PRICE_USDC } from 
 import { createPaymentGate, readPayerFromRequest, paymentMatchesConsent } from './lib/paymentGate.js';
 import { MAX_REQUESTS_PER_RUN, PROBE_ORDER, CANARY_TOKEN, CONSENT_POLICY } from './lib/spec.js';
 import { explainVerdict, explainerStatus } from './lib/explain.js';
+import { encodeCertificateLink, decodeCertificateLink } from './lib/certificateLink.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-/** Reports live in memory: a restart losing them is harmless, since every
- *  report is independently verifiable from its own signature. */
+/**
+ * Reports live in memory, and that is now a convenience rather than the
+ * mechanism.
+ *
+ * This Map is a same-process shortcut: while the instance that issued a report
+ * is still alive, `GET /reports/<id>` and `GET /verify/<id>` can answer from
+ * it. It is not what makes a certificate durable, because it cannot be. On the
+ * free hosting plan the process is spun down after 15 minutes of quiet and the
+ * filesystem goes with it, so anything kept here has a lifetime measured in
+ * minutes.
+ *
+ * The durable answer is the permanent link built in `storeReport`, which
+ * carries the whole report and certificate inside the URL and needs no stored
+ * state at all. See `lib/certificateLink.js` for why that beat a database.
+ */
 const reports = new Map();
 
 /** Free demo budget, so an open route cannot become the abuse vector the
@@ -104,8 +119,80 @@ function withSignerCheck(result, certificate) {
   return out;
 }
 
+/**
+ * The one description of what a verification found, used by both routes that
+ * can produce one.
+ *
+ * Shared rather than written twice on purpose. `GET /verify/<id>` and
+ * `GET /c/<token>` differ only in where the bytes came from, and the answer to
+ * "is this certificate sound" must not depend on that. Two hand-maintained
+ * copies of this wording is how one route quietly starts calling an unsigned
+ * report untrustworthy while the other calls it unsigned.
+ *
+ * @param {{ id: string|null, report: object, certificate: object|null }} held
+ */
+function describeVerification(held) {
+  // An UNSIGNED report is not a failed one, and saying so matters. A
+  // deployment with no signing key produces reports with no certificate;
+  // running those through the tamper check answers "no certificate supplied"
+  // and, worded as a failure, would tell a reader to distrust a report that
+  // is perfectly sound and simply was never signed. Two different states,
+  // two different answers.
+  const unsigned = !held.certificate;
+  const result = unsigned
+    ? {
+        valid: null,
+        signedByStressProof: false,
+        reason:
+          'this report was never signed, because the deployment that produced it has no signing key configured. That is not a sign of tampering: there is simply nothing to check it against.',
+      }
+    : withSignerCheck(verifyCertificate(held.report, held.certificate), held.certificate);
+
+  return {
+    reportId: held.id,
+    signed: !unsigned,
+    ...result,
+    target: held.certificate?.target ?? held.report?.target,
+    verdict: held.certificate?.verdict ?? held.report?.verdict,
+    score: held.certificate?.score ?? held.report?.score,
+    meaning: unsigned
+      ? 'Unsigned, so it cannot be checked. Take it as an unverified claim rather than as evidence.'
+      : result.valid && result.signedByStressProof
+        ? 'This report has not been altered since we signed it.'
+        : 'Do not trust this report. ' + (result.reason ?? 'It failed verification.'),
+    // The full report travels with the answer here. On the link route there is
+    // no id to look it up by afterwards, and a verdict with no evidence under
+    // it is the shape of claim this product exists to object to.
+    report: held.report,
+    checkItYourself: {
+      report: held.id ? `GET /reports/${held.id}` : 'included above, in full',
+      method:
+        'POST the report and certificate to /verify from anywhere, or recover the signer from the EIP-712 signature with any library. You do not have to take our word for any of this.',
+      publishedSignerAddress: getSignerAddress(),
+    },
+  };
+}
+
 export function createApp({ demoAllowlist = [], payment = createPaymentGate() } = {}) {
   const app = express();
+
+  // WITHOUT THIS, THE FREE DEMO ALLOWS THREE RUNS IN TOTAL, NOT THREE PER
+  // VISITOR. Deployed, we sit behind Render's load balancer, so every request
+  // arrives from the same proxy address. `req.ip` is then that proxy for
+  // everybody, the per-address demo limit counts all visitors as one caller,
+  // and the fourth person to ever try the demo is refused as a repeat
+  // offender. It works perfectly on a laptop, where there is no proxy, which
+  // is exactly the kind of difference that only shows up in front of an
+  // audience.
+  //
+  // Trusting exactly ONE hop, not `true`. `trust proxy: true` would take the
+  // leftmost entry of X-Forwarded-For, which is supplied by the caller and can
+  // therefore be invented at will, handing anyone an unlimited supply of fresh
+  // identities and defeating the limit in the other direction. One hop reads
+  // the entry our own load balancer added. The daily budget still stands
+  // behind it either way.
+  app.set('trust proxy', 1);
+
   app.use(express.json({ limit: '256kb' }));
   app.use(express.static(path.join(__dirname, '..', 'public')));
 
@@ -154,6 +241,17 @@ export function createApp({ demoAllowlist = [], payment = createPaymentGate() } 
           maxPermissionDays: Math.round(CONSENT_POLICY.STANDING_CONSENT_MAX_LIFETIME_MS / 86_400_000),
           note: 'The permission file is re-fetched and fully re-checked before every run. Deleting it stops the next run, and it expires on a date you publish.',
         },
+      },
+      // Named here so nobody has to work out which of the three verification
+      // routes survives a restart. Two of them depend on this process still
+      // holding the report; one of them does not, and that is the difference
+      // worth publishing.
+      verification: {
+        permanentLink: 'GET /c/<token>',
+        note: 'every report is issued with a permanent link that carries the whole report and signature inside the URL. It needs no stored state, so it still verifies after this service restarts, sleeps, redeploys, or is shut down for good.',
+        stateDependent: ['GET /verify/<reportId>', 'GET /reports/<reportId>'],
+        stateDependentNote: 'these read a copy held in this process. On the free hosting plan the process is spun down after 15 minutes without traffic, which drops every copy, so treat a report id as a shortcut rather than as an address.',
+        offline: 'POST /verify checks a report and certificate you already hold, against no stored state at all.',
       },
       signerAddress: getSignerAddress(),
       canaryToken: CANARY_TOKEN, // published on purpose: see the page
@@ -238,7 +336,7 @@ export function createApp({ demoAllowlist = [], payment = createPaymentGate() } 
     pendingTargets.delete(req.params.runId);
     const run = await runCertification(target);
     const stored = await storeReport(run);
-    res.json(stored);
+    res.json(withAbsoluteLink(stored, req));
   });
 
   // --- free demo -----------------------------------------------------------
@@ -257,7 +355,7 @@ export function createApp({ demoAllowlist = [], payment = createPaymentGate() } 
       }
       noteDemoUse(ip);
       const run = await certifyOwnDemoAgent(req.body.demoMode);
-      return res.json(await storeReport(run));
+      return res.json(withAbsoluteLink(await storeReport(run), req));
     }
 
     const invalid = validateTargetInput(req.body);
@@ -283,7 +381,7 @@ export function createApp({ demoAllowlist = [], payment = createPaymentGate() } 
       sampleBody: req.body.sampleBody,
       authHeaders: null,
     });
-    res.json(await storeReport(run));
+    res.json(withAbsoluteLink(await storeReport(run), req));
   });
 
   // --- verification: check any report without trusting us -------------------
@@ -315,46 +413,50 @@ export function createApp({ demoAllowlist = [], payment = createPaymentGate() } 
     if (!found) {
       return res.status(404).json({
         error: 'unknown report id',
-        // Said plainly: reports are held in memory, so a restart drops them.
-        // That is not a loss of evidence, because anyone holding the report
-        // and certificate can still check them via POST /verify.
-        note: 'reports are kept in memory and are dropped when the service restarts. If you saved the report and certificate, POST them to /verify instead, because that check does not need our copy.',
+        // Said plainly, and with the fix named rather than only the problem.
+        // An id is a pointer into this process's memory, and the process is
+        // spun down after 15 quiet minutes on the free plan. The permanent
+        // link handed out with every report is not a pointer at all: it
+        // carries the report, so it cannot go stale.
+        note: 'a report id only points at a copy held in this process, and the process is restarted or spun down regularly, which drops it. The permanent link issued with every report carries the whole report inside the URL and keeps working. If you saved the report and certificate, POST them to /verify instead, because that check does not need our copy either.',
       });
     }
 
-    // An UNSIGNED report is not a failed one, and saying so matters. A
-    // deployment with no signing key produces reports with no certificate;
-    // running those through the tamper check answers "no certificate supplied"
-    // and, worded as a failure, would tell a reader to distrust a report that
-    // is perfectly sound and simply was never signed. Two different states,
-    // two different answers.
-    const unsigned = !found.certificate;
-    const result = unsigned
-      ? {
-          valid: null,
-          signedByStressProof: false,
-          reason:
-            'this report was never signed, because the deployment that produced it has no signing key configured. That is not a sign of tampering: there is simply nothing to check it against.',
-        }
-      : withSignerCheck(verifyCertificate(found.report, found.certificate), found.certificate);
+    res.json(describeVerification(found));
+  });
 
+  // --- verification: the link that needs nothing from us --------------------
+  //
+  // The one a judge should be given. Everything needed to check the
+  // certificate is inside the URL, so this answers identically on a freshly
+  // woken instance, on a redeployed one, and on a copy of this code running
+  // somewhere we have never heard of. There is no lookup here to miss.
+  //
+  // It is deliberately the SAME answer `GET /verify/<id>` gives, produced by
+  // the same function. Two verification routes that could word the same
+  // finding differently is how a reader ends up trusting whichever one they
+  // happened to open.
+  app.get('/c/:token', (req, res) => {
+    const decoded = decodeCertificateLink(req.params.token);
+    if (!decoded.ok) {
+      return res.status(400).json({
+        error: decoded.reason,
+        note: 'this link is checked entirely from its own contents, so a failure here means the link itself is wrong, not that we have forgotten anything.',
+      });
+    }
+
+    // Note what is NOT trusted: the link supplied both the report and the
+    // certificate, so a stranger controls every byte that arrived. That is
+    // fine, and it is the whole point. The signature check below is what
+    // decides whether these two belong together and whether we signed them,
+    // and it would catch a hand-edited link exactly as it catches a
+    // hand-edited report.
     res.json({
-      reportId: found.id,
-      signed: !unsigned,
-      ...result,
-      target: found.certificate?.target ?? found.report?.target,
-      verdict: found.certificate?.verdict ?? found.report?.verdict,
-      score: found.certificate?.score ?? found.report?.score,
-      meaning: unsigned
-        ? 'Unsigned, so it cannot be checked. Take it as an unverified claim rather than as evidence.'
-        : result.valid && result.signedByStressProof
-          ? 'This report has not been altered since we signed it.'
-          : 'Do not trust this report. ' + (result.reason ?? 'It failed verification.'),
-      checkItYourself: {
-        report: `GET /reports/${found.id}`,
-        method: 'POST the report and certificate to /verify from anywhere, or recover the signer from the EIP-712 signature with any library. You do not have to take our word for any of this.',
-        publishedSignerAddress: getSignerAddress(),
-      },
+      ...describeVerification({ id: null, report: decoded.report, certificate: decoded.certificate }),
+      // Repeated here because a reader arriving from a pasted link has no
+      // other way to know how much of this the link's sender could have
+      // chosen. They chose all of it; the signature is what makes that safe.
+      source: 'read from the link itself, not from anything we stored. The signature is what makes that safe: a link with an edited verdict fails the check below.',
     });
   });
 
@@ -435,9 +537,75 @@ async function storeReport(run) {
       ? 'the explanation model did not answer in time, so this report carries evidence and a verdict without a summary. Nothing about the verdict changes.'
       : status.reason;
 
-  const stored = { id, report, certificate, explanation, explanationUnavailable };
+  // The durable half of the answer. Built once, here, so every route that can
+  // produce a report hands out the same kind of link without having to
+  // remember to. A link that came out too long to serve reliably is reported
+  // as unavailable with the reason, rather than published and left to break
+  // inside somebody's proxy.
+  const link = encodeCertificateLink({ report, certificate });
+
+  const stored = {
+    id,
+    report,
+    certificate,
+    explanation,
+    explanationUnavailable,
+    permanentLink: link.ok ? link.path : null,
+    permanentLinkUnavailable: link.ok ? null : link.reason,
+  };
   reports.set(id, stored);
+  evictOldReports();
   return stored;
 }
 
-export { reports };
+/**
+ * How many reports the same-process shortcut will hold.
+ *
+ * A cap became the obviously correct thing the moment the permanent link
+ * existed. Before it, dropping a report meant losing it, so an unbounded Map
+ * was at least arguable. Now the link is what makes a report durable and this
+ * Map is only a convenience, so holding every report a long-lived process ever
+ * produced buys nothing and slowly spends a 512MB instance's memory on it.
+ *
+ * 200 is generous next to the free demo's 40 runs a day, and a report is about
+ * ten kilobytes, so the ceiling is roughly two megabytes.
+ */
+const MAX_HELD_REPORTS = 200;
+
+/**
+ * Drop the oldest reports once the shortcut is full.
+ *
+ * Oldest first, relying on Map preserving insertion order. Evicting a report
+ * is not losing it: whoever ran it holds a permanent link that verifies with no
+ * help from us, which is exactly the property that makes this safe to do.
+ */
+function evictOldReports() {
+  while (reports.size > MAX_HELD_REPORTS) {
+    const oldest = reports.keys().next().value;
+    reports.delete(oldest);
+  }
+}
+
+/**
+ * Turn the stored report's relative permanent link into one somebody can
+ * actually click.
+ *
+ * Done at response time rather than at storage time because only a request
+ * knows what host it arrived on. The same report served from localhost and
+ * from the deployed service should hand back a link to whichever one the
+ * caller is actually talking to, and a base URL baked in at boot gets that
+ * wrong the first time anyone runs this anywhere else.
+ */
+function withAbsoluteLink(stored, req) {
+  if (!stored.permanentLink) return stored;
+  return {
+    ...stored,
+    permanentUrl: `${req.protocol}://${req.get('host')}${stored.permanentLink}`,
+    // Said next to the link, because the reason a link this long is worth
+    // having is not obvious from looking at it.
+    permanentLinkNote:
+      'this link carries the whole report and its signature inside the URL, so it verifies with no help from us. It keeps working after this service restarts, sleeps, redeploys, or shuts down for good. The report id above is only a shortcut while this process happens to still be running.',
+  };
+}
+
+export { reports, MAX_HELD_REPORTS };

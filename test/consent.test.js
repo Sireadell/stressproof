@@ -202,3 +202,24 @@ test('the first value wins if a key appears twice', () => {
   const parsed = parseConsentFile('challenge=first\nchallenge=second\n');
   assert.equal(parsed.challenge, 'first');
 });
+
+// --- a property of the hosting, asserted here so it cannot drift -----------
+
+test('a consent code cannot outlive the idle window that spins the service down', () => {
+  // Pending consent codes are held in memory, so a spin-down destroys them.
+  // That is harmless ONLY because the free hosting plan spins down after 15
+  // minutes without traffic and a code is dead after 15 minutes anyway: the
+  // earliest possible sleep begins at the moment the last code already expired.
+  //
+  // Nothing enforces that coincidence except this test. Lengthening the code's
+  // lifetime without thinking about the hosting would start silently killing
+  // codes that callers still believe are live, and the failure would look like
+  // "your consent file is wrong" rather than like a deployment property.
+  const RENDER_FREE_IDLE_SPINDOWN_MS = 15 * 60_000;
+  assert.ok(
+    THRESHOLDS.CONSENT_CHALLENGE_TTL_MS <= RENDER_FREE_IDLE_SPINDOWN_MS,
+    `a consent code lives ${THRESHOLDS.CONSENT_CHALLENGE_TTL_MS}ms but the service may sleep after ` +
+      `${RENDER_FREE_IDLE_SPINDOWN_MS}ms of quiet, so codes would vanish before they expired. ` +
+      'Either shorten the code or stop holding pending runs in memory.',
+  );
+});

@@ -14,7 +14,7 @@ people running it get the same answer.
 
 ## Status
 
-Working end to end. **190 tests passing** (counted, not estimated — run
+Working end to end. **288 tests passing** (counted, not estimated — run
 `npm test` and check). All twelve probes are implemented, the scoring engine
 is live, reports are signed and independently verifiable, and there is a free
 demo that needs no wallet.
@@ -33,6 +33,11 @@ npm install && npm start
 curl -s -X POST http://localhost:3000/demo/certify \
   -H 'content-type: application/json' -d '{"demoMode":"sloppy"}'
 ```
+
+The response carries `permanentUrl`. Open it and you get the same verdict back
+with the signature checked, computed entirely from the link. Nothing is looked
+up, so it keeps answering after the service restarts, sleeps, redeploys, or is
+shut down for good. That is why there is no database here.
 
 Swap `sloppy` for `honest`, `crashy` or `echoer` and watch the verdict change.
 The demo runs against a deliberately flawed agent we host ourselves, so it
@@ -62,7 +67,7 @@ rather than merely claiming it.
 npm test
 ```
 
-190 passing, stable across repeated runs. These are not decoration — writing
+288 passing, stable across repeated runs. These are not decoration — writing
 them caught bugs that reading the code did not:
 
 - The published 30-request cap did not match the sum of its parts (it was 32).

@@ -22,7 +22,7 @@ the end.
 | Standing consent for recurring checks | **Real** | Opt-in second mode for unattended re-certification. One published file authorises one wallet to certify one exact URL, with an expiry date the owner sets and a maximum frequency the owner sets. All five fields are re-fetched and re-checked before every single run, so deleting the file stops the next run. 23 tests, including that a one-time file is never read as standing consent and the reverse |
 | Standing permission capped at 30 days | **Real** | A ceiling applied regardless of what the file claims. A file claiming a longer life is refused outright rather than quietly shortened, so renewing the file is a recurring, if weak, proof that somebody still controls the origin. The constant is in `spec.js` as `CONSENT_POLICY`, deliberately outside the scoring fingerprint, because a permission window cannot move a single point on a single probe and pretending otherwise would invalidate every report ever issued |
 | Owner-set testing frequency | **Real** | The consent file states the shortest gap the owner is willing to be tested at. It applies alongside StressProof's own 15-minute per-target cooldown, whichever is stricter wins, and the refusal names which of the two stopped the run so an owner is never sent to edit a file that was not the problem |
-| Per-target cooldown | **Simplified** | Enforced, and enforced across payers so paying repeatedly is not unlimited flooding, but held in memory, so a restart clears it. This matters more on the deployed service than it reads: the free hosting plan sleeps after 15 minutes without traffic, so in practice the cooldown is cleared often rather than rarely. A determined caller who waits out the idle window gets a fresh cooldown. The 30-request cap per run is unaffected, being fixed in the spec rather than counted at runtime |
+| Per-target cooldown | **Simplified** | Enforced, and enforced across payers so paying repeatedly is not unlimited flooding, but held in memory, so a restart clears it. Deliberately not fixed before the deadline: the datastore it would take is the same one ruled out for reports, and the worst case here is a shorter gap between runs rather than a lost certificate. This matters more on the deployed service than it reads: the free hosting plan sleeps after 15 minutes without traffic, so in practice the cooldown is cleared often rather than rarely. A determined caller who waits out the idle window gets a fresh cooldown. The 30-request cap per run is unaffected, being fixed in the spec rather than counted at runtime |
 | All 12 probes implemented | **Real** | 54 probe tests against a live local fixture in five behavioural modes. Every probe observes only — none decides an outcome |
 | Injection probe's false-accusation defence | **Real** | The `echoer` fixture (a correct agent that quotes bad input back) lands 6 techniques but every matching control echoes too, so it is not convicted. A genuinely compromised stub is caught on all 6 with all controls silent |
 | Scoring engine | **Real** | Six-outcome classifier, pure functions, no model anywhere near a verdict. 33 tests, most of them about *not* convicting |
@@ -30,7 +30,13 @@ the end.
 | Narrow evidence downgrades instead of voiding | **Real** | A run that never reached a conclusion about adversarial input is reported with what it did find, capped below the top verdict, and told plainly that this is a limit on the test rather than a fault in the agent. Voiding a real finding and awarding an unearned badge are both worse |
 | Full 12-probe run, end to end | **Real** | Runs against a live agent inside the published 30-request cap; an honest agent certifies RESILIENT, a lying one is capped at PARTIAL, an unreachable one is INCONCLUSIVE and never BRITTLE |
 | Signed, independently verifiable reports | **Real** | Every report is signed; altering one character of a verdict or of the evidence breaks verification. 13 tests, most of them deliberate tampering. Anyone can recover the signing address from the report alone |
-| Verification by one URL | **Real** | `GET /verify/<id>` checks a report we are serving, so a judge needs a link rather than a hand-built request. `POST /verify` still checks a copy you saved, from a machine we do not run |
+| Verification by one URL | **Real** | Every report is issued with a permanent link, `GET /c/<token>`, that carries the whole report and its signature inside the URL. Verifying it is a pure function of the link: no lookup, no memory, no disk, no database, so it still answers after the service restarts, sleeps, redeploys, or is shut down for good. A judge needs a link rather than a hand-built request. `POST /verify` still checks a copy you saved, from a machine we do not run |
+| The permanent link survives the service being wiped | **Real** | Proven by a test that clears the report store outright, confirms `GET /verify/<id>` then correctly 404s, and confirms the link still returns the same verdict, the same signature check and the full report. 12 further tests cover the encoding itself, including a truncated link, a hand-edited verdict, and two decompression bombs |
+| A forged permanent link is caught by the signature, not by us | **Real** | The link supplies every byte, so a holder can edit the report and re-encode it. The certificate is what refuses: a test moves a clean verdict onto a different target URL, and the link answers `valid: false` and "Do not trust this report". Nothing stored is consulted, which is the point |
+| Both verification routes give the same answer | **Real** | `GET /verify/<id>` and `GET /c/<token>` differ only in where the bytes came from, and are rendered by one shared function so neither can word a finding more kindly than the other. A test compares seven fields across the two routes for the same report |
+| Report ids are honest about being temporary | **Real** | An id points at a copy held in this process and nothing more. The 404 says so and names the permanent link as the thing that does not go stale, and `/about` publishes which verification routes depend on stored state and which do not |
+| In-memory report store is capped | **Real** | 200 reports, oldest evicted first. Possible only because eviction no longer loses anything: the holder's permanent link verifies without us. Tested by filling the store past the ceiling and checking it prunes rather than grows |
+| Free demo counts visitors separately behind a load balancer | **Real** | Deployed, every request arrives from the hosting provider's proxy. Without `trust proxy` the per-address demo limit would read all visitors as one caller and refuse the fourth person ever to click the demo, while looking perfect on a laptop where there is no proxy. Exactly one hop is trusted, not the caller-supplied chain, so the limit cannot be dodged with a forged header either. Both halves have a test |
 | Forged certificates told apart from altered ones | **Real** | A signature that is perfectly self-consistent can still have been made by somebody else's key. Both verification routes answer `valid` and `signedByStressProof` separately, so a forgery cannot pass by reading one field. Covered by a test that signs a real report with a stranger's key |
 | Probe contract + 5-mode test agent | **Real** | Shared harness all probes are tested against, including an `echoer` mode built specifically so the injection probe's false-accusation path cannot ship untested |
 | On-chain publication of certificates | **Not built** | Deliberately cut, not deferred. An offline-verifiable signature gives the same guarantee at no cost and with no risk of a failed broadcast spoiling a good verdict |
@@ -38,6 +44,8 @@ the end.
 | Silence that says which kind of silence it is | **Real** | A report with no summary now says whether the explainer is switched off or simply did not answer, and states that the verdict is unaffected either way. An unlabelled blank reads as a broken product |
 | Unsigned reports told apart from tampered ones | **Real** | A deployment with no signing key produces unsigned reports. Verification reports those as unsigned rather than as failures, because telling a reader to distrust a sound report would be the same dishonesty this product measures |
 | Honesty table served, not filed | **Real** | Published at `/honesty` straight from the repo, so the document making the claims is reachable without cloning the code |
+| Boots with no secrets at all | **Real** | Verified by actually starting `src/index.js` with `PORT` set and `STRESSPROOF_PAY_TO`, `STRESSPROOF_SIGNER_PRIVATE_KEY` and `GROQ_API_KEY` all removed from the environment, not by reading the code. It binds the port, `/health` answers, the page and `/honesty` serve, the paid route refuses with a 503, `/about` reports payment `misconfigured`, explainer unavailable and a null signer address, and a full twelve-probe demo run still completes and issues a working permanent link |
+| No database, and that is the design rather than a shortcut | **Real** | Render's free Postgres expires 30 days after creation, is one per workspace and has no backups, and its free web service filesystem is wiped on the exact event we needed to survive. Both were checked against Render's live documentation, not assumed. Putting the signed report inside the link removes the need for either, and gives a stronger guarantee than a database would: the link verifies even if this service is shut down permanently |
 | Deployment config | **Real** | `render.yaml` with every secret left unset on purpose. Each missing one degrades loudly and visibly at `/about`: no payout address refuses paid runs, no signing key leaves reports unsigned, no model key leaves reports unexplained |
 | HTTP service + public page | **Real** | Consent flow, free demo, both verification endpoints. 16 route tests: refusals explain themselves, unknown ids 404 rather than crash, the free route refuses a target that never agreed, and the abuse ceiling is proven to actually stop a caller |
 | Free demo without a wallet | **Real** | Runs against a deliberately flawed agent **we host**, so the demo raises no consent question. Capped per address and per day |
@@ -142,11 +150,47 @@ These are properties of the design, not bugs to be fixed later.
   the 402 challenge itself and on `/about`, so it is a disclosed policy rather
   than a surprise, but it is a real cost to a payer whose agent happened to be
   offline.
-- **Reports and rate limits are held in memory, so a restart clears both.**
-  A restart drops stored reports (they stay verifiable from a saved copy) and
-  also resets the free demo's daily budget and the per-target cooldown. On a
-  host that restarts often, those ceilings are looser in practice than the
-  numbers suggest.
+- **The abuse ceilings are held in memory, so a restart clears them.** The
+  free demo's daily budget and the per-target cooldown both live in the running
+  process, and the free hosting plan spins that process down after fifteen
+  minutes without traffic. So a caller willing to wait out a quiet spell gets a
+  fresh budget and a fresh cooldown. The per-run cap of 30 requests is
+  unaffected, because it is fixed in the spec rather than counted at runtime,
+  and the fixed target list is unaffected for the same reason. Fixing this
+  properly needs a datastore that survives a restart, and that was judged not
+  worth adding before the deadline for a ceiling whose worst case is somebody
+  running the free demo against our own demo agent more often than we intended.
+- **Stored reports are dropped by the same restart, and this no longer
+  matters.** It used to be the serious version of this problem, because
+  `GET /verify/<id>` was the only one-click way to check a certificate and every
+  such link died fifteen quiet minutes after it was issued. The permanent link
+  replaced that: it carries the report, so there is nothing to forget. The id
+  route still exists and still dies on a restart. It is a shortcut for the
+  process that issued the report, it says so when it 404s, and it points at the
+  link that does not.
+- **A deployment with no signing key issues permanent links that say
+  "unsigned".** The link mechanism works either way, and it correctly reports an
+  unsigned report as unsigned rather than as untrustworthy. But the headline
+  claim, that a stranger can check our signature without trusting us, needs
+  `STRESSPROOF_SIGNER_PRIVATE_KEY` to actually be set on the deployment. This is
+  visible from outside at `/about`, which publishes a null signer address, so it
+  is a loud failure rather than a quiet one. It is still a way to deploy a
+  weaker product than the one described here.
+- **A spin-down cannot destroy a live consent code, but only by coincidence.**
+  Pending consent codes are held in memory like everything else. They expire
+  after fifteen minutes, and the hosting plan spins the service down after
+  fifteen minutes without traffic, so the shortest possible sleep starts at the
+  moment the last code was already dead. The two numbers being equal is what
+  makes this safe, and nothing enforces that they stay equal. If the code
+  lifetime is ever lengthened without thinking about the hosting, codes will
+  start disappearing before they expire.
+- **The permanent link is long, roughly two and a half thousand characters.**
+  That is the whole price of needing no database. It is meant to be clicked or
+  pasted, not read aloud or typed. A report that packs to more than six thousand
+  characters is refused a link at issue time rather than handed out and left to
+  fail inside somebody's proxy, and the response says so and points at
+  `POST /verify` instead. No real run has come close to that ceiling: the
+  twelve-probe demo report packs to about 2,200, and a test asserts a real signed report stays under the ceiling.
 
 - **The evidence floors were tuned against our own demo agents, not a large
   sample of real ones.** Five conclusions across two families is a judgement
