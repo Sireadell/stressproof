@@ -38,7 +38,7 @@ services:
         value: 22.23.2
 
       # --- payment ---------------------------------------------------------
-      # The wallet that receives 0.25 USDC per certification run.
+      # The wallet that receives 0.10 USDC per certification run.
       - key: STRESSPROOF_PAY_TO
         sync: false
       # Leave unset for Base mainnet. Set to "sepolia" to fall back to testnet,

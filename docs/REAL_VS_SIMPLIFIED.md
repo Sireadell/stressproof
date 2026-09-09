@@ -49,7 +49,7 @@ the end.
 | Deployment config | **Real** | `render.yaml` with every secret left unset on purpose. Each missing one degrades loudly and visibly at `/about`: no payout address refuses paid runs, no signing key leaves reports unsigned, no model key leaves reports unexplained |
 | HTTP service + public page | **Real** | Consent flow, free demo, both verification endpoints. 16 route tests: refusals explain themselves, unknown ids 404 rather than crash, the free route refuses a target that never agreed, and the abuse ceiling is proven to actually stop a caller |
 | Free demo without a wallet | **Real** | Runs against a deliberately flawed agent **we host**, so the demo raises no consent question. Capped per address and per day |
-| Paid route gated at 0.25 USDC | **Real** | `POST /runs/:runId/start` is behind an x402 paywall. An unpaid request gets a 402 carrying the network, the USDC address, the amount and the EIP-712 domain a payer needs to sign with. Asking for a consent code stays free, because it costs us nothing |
+| Paid route gated at 0.10 USDC | **Real** | `POST /runs/:runId/start` is behind an x402 paywall. An unpaid request gets a 402 carrying the network, the USDC address, the amount and the EIP-712 domain a payer needs to sign with. Asking for a consent code stays free, because it costs us nothing |
 | Payment bound to the wallet that proved consent | **Real** | The wallet that pays must be the wallet named in the consent file. Otherwise anyone holding a run id could buy 30 requests aimed at an agent somebody else vouched for. Checked as a pure function with its own tests, including that letter case does not falsely refuse a legitimate payer |
 | Never free by accident | **Real** | Three boot states, not two. Charging, deliberately free, or *meant to charge and cannot*, and the third refuses with a 503 rather than quietly giving runs away. A facilitator that cannot be reached also refuses. Both covered by tests that assert the run never starts |
 | Free demo's triple bound | **Real** | Per-address limit, daily budget, and a fixed target list, all three enforced before any traffic leaves. The ceiling is proven by a test that keeps calling until it is actually stopped |
@@ -146,7 +146,7 @@ These are properties of the design, not bugs to be fixed later.
   chance to reword it. Correct behaviour, poor explanation.
 - **A run bills even when the target turns out to be unreachable.** The work
   being paid for is the probing, not the verdict, so a target that is down
-  produces an INCONCLUSIVE report and still costs 0.25 USDC. That is stated in
+  produces an INCONCLUSIVE report and still costs 0.10 USDC. That is stated in
   the 402 challenge itself and on `/about`, so it is a disclosed policy rather
   than a surprise, but it is a real cost to a payer whose agent happened to be
   offline.

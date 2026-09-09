@@ -79,7 +79,7 @@ yours to do, not something to automate on your behalf.
 To close out GO/NO-GO 1 completely, once the paid route exists on Day 9:
 
 1. Fund a wallet on Base with a small amount of USDC (well under a dollar
-   covers several test runs at $0.25).
+   covers several test runs at $0.10).
 2. Make one paid call to the live endpoint.
 3. Record the settled transaction hash.
 

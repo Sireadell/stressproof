@@ -130,7 +130,7 @@
         scope rather than quietly waved through.</li>
       <li><strong>A run bills even if your agent turns out to be offline.</strong>
         What you pay for is the probing, not a good verdict. An unreachable
-        target gets an INCONCLUSIVE report and still costs $0.25.</li>
+        target gets an INCONCLUSIVE report and still costs $0.10.</li>
       <li><strong>Report ids expire when this service sleeps, and the
         permanent link does not.</strong> We run on a free plan that shuts the
         service down after fifteen minutes without traffic, which drops every
@@ -260,7 +260,7 @@ curl -s -X POST https://stressproof.dev/verify \
   <h2>Paying for a run</h2>
   <p class="muted">
     Asking for a consent code is free. Starting the run costs
-    <strong>$0.25 in USDC on Base</strong>, charged once per run rather than per
+    <strong>$0.10 in USDC on Base</strong>, charged once per run rather than per
     probe, over x402. Start the run and you get a 402 back carrying everything a
     paying client needs: the chain, the token, the amount, and the signing
     domain.
@@ -281,7 +281,7 @@ curl -s https://stressproof.dev/about | grep -A4 '"payment"'
   <hr class="rule">
   <footer>
     <p><strong>StressProof</strong> — black-box resilience certification for AI agents.
-    $0.25 in USDC on Base per run, paid by the agent making the request.</p>
+    $0.10 in USDC on Base per run, paid by the agent making the request.</p>
     <p>Injection technique shapes adapted from
       <a href="https://github.com/kunwarshivam/agentops-bench">AgentOps-Bench</a>
       (Apache-2.0). Detection and payload are ours.</p>

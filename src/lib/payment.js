@@ -67,11 +67,8 @@ export const USDC_BASE_SEPOLIA = Object.freeze({
 
 /**
  * Price of one certification run. Per run, never per probe.
- *
- * Higher than PulseVerify's per-call price because a run spends real time and
- * makes up to 30 real outbound requests to somebody else's server.
  */
-export const RUN_PRICE_USDC = '0.25';
+export const RUN_PRICE_USDC = '0.10';
 
 /**
  * Resolve payment config from the environment.
