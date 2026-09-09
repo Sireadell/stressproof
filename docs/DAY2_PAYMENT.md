@@ -76,17 +76,12 @@ document can go stale, the facilitator cannot.
 me.** Sending a real payment needs a funded wallet and a signature, which is
 yours to do, not something to automate on your behalf.
 
-To close out GO/NO-GO 1 completely, once the paid route exists on Day 9:
+**Closed out 2026-09-09.** halflife, paying from its own funded wallet on Base
+mainnet, made one real paid call to the live `/runs/:runId/start` endpoint and
+settled: $0.10 USDC, transaction
+[`0x184f58f282cb376ada9f186bc10eee114f749739fa5ca549e040e35b6c5a7922`](https://basescan.org/tx/0x184f58f282cb376ada9f186bc10eee114f749739fa5ca549e040e35b6c5a7922).
+That hash is in the README as proof a judge can check independently.
 
-1. Fund a wallet on Base with a small amount of USDC (well under a dollar
-   covers several test runs at $0.10).
-2. Make one paid call to the live endpoint.
-3. Record the settled transaction hash.
-
-That hash goes in the README as proof a judge can check independently. Until
-then the honesty table says payment is verified-but-not-settled, which is the
-truthful state.
-
-**Judgement:** this does not block Days 3–8. The config is proven correct
-against live infrastructure, both networks work, and the fallback path is a
-config flag. Settlement is a ten-minute task once there is a route to pay.
+**Judgement:** GO/NO-GO 1 is settled, not just verified. The config was proven
+correct against live infrastructure ahead of time, and the one real payment
+confirms it end to end.

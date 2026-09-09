@@ -19,9 +19,11 @@ Working end to end. **288 tests passing** (counted, not estimated — run
 is live, reports are signed and independently verifiable, and there is a free
 demo that needs no wallet.
 
-Not done: no real payment has been settled yet. The payment config is verified
-against the live facilitator, but until a real transaction exists we do not
-claim one. See [`docs/REAL_VS_SIMPLIFIED.md`](docs/REAL_VS_SIMPLIFIED.md) for
+Real payment settled: $0.10 USDC, Base mainnet, paid by
+[halflife](https://github.com/Sireadell/halflife) over x402 for one
+certification run. Transaction
+[`0x184f58f282cb376ada9f186bc10eee114f749739fa5ca549e040e35b6c5a7922`](https://basescan.org/tx/0x184f58f282cb376ada9f186bc10eee114f749739fa5ca549e040e35b6c5a7922),
+checkable on chain by anyone. See [`docs/REAL_VS_SIMPLIFIED.md`](docs/REAL_VS_SIMPLIFIED.md) for
 exactly what is real, what is narrowed, and what is not built. That file is
 updated as the build goes and nothing in it is retrofitted at the end.
 
