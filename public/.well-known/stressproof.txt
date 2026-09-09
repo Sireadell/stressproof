@@ -1,0 +1,5 @@
+standing=yes
+payer=0xb3fb14fecac09efbd0c74fc07d50d7ed1eef2b53
+target=https://stressproof-6g88.onrender.com/health
+expires=2026-10-09T00:00:00Z
+min-hours-between-runs=1
