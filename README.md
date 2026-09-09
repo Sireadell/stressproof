@@ -103,3 +103,5 @@ run without proof that the requester controls the target:
 Apache-2.0. Includes work adapted from
 [AgentOps-Bench](https://github.com/kunwarshivam/agentops-bench) — see
 [`NOTICE`](NOTICE).
+
+<!-- auto-deploy connectivity test, safe to remove -->
