@@ -71,6 +71,28 @@ export const USDC_BASE_SEPOLIA = Object.freeze({
 export const RUN_PRICE_USDC = '0.10';
 
 /**
+ * A human-readable decimal amount, in atomic units for a token with the given
+ * number of decimals.
+ *
+ * This exists because of a real, live bug: the object-shaped price the x402
+ * server library accepts (`{ amount, asset, extra }`) is treated as an
+ * AssetAmount and passed straight through with no conversion of its own — see
+ * `parsePrice` in @x402/evm's exact/server, which returns `price.amount`
+ * verbatim when `price` is already an object. A decimal string like "0.10"
+ * put there is signed on the payer's side as a raw EIP-3009 `value`, and
+ * `BigInt("0.10")` throws. Found on the first real payment this project ever
+ * attempted, which is also why no earlier test caught it: nothing before that
+ * moment ever passed a price through actual EIP-712 signing.
+ */
+export function toAtomicUnits(decimal, decimals) {
+  const [whole, fraction = ''] = String(decimal).split('.');
+  if (fraction.length > decimals) {
+    throw new Error(`${decimal} has more than ${decimals} decimal places`);
+  }
+  return BigInt(whole || '0') * 10n ** BigInt(decimals) + BigInt(fraction.padEnd(decimals, '0') || '0');
+}
+
+/**
  * Resolve payment config from the environment.
  *
  * Defaults are mainnet + xpay. STRESSPROOF_NETWORK=sepolia flips the whole
@@ -127,7 +149,11 @@ export function buildCertifyPaymentOption({ payTo, config = resolvePaymentConfig
     network: config.network,
     payTo,
     price: {
-      amount: config.price,
+      // Atomic units, not the decimal display price. See toAtomicUnits above
+      // for why: an object-shaped price is treated as already-atomic and
+      // handed straight through to EIP-712 signing with no conversion of its
+      // own, so a decimal string here breaks every payer that reaches it.
+      amount: toAtomicUnits(config.price, config.token.decimals).toString(),
       asset: config.token.address,
       extra: { ...config.token.eip712Domain },
     },

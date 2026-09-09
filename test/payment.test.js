@@ -13,6 +13,7 @@ import {
   buildCertifyPaymentOption,
   withFacilitatorTimeout,
   extractPayerAddress,
+  toAtomicUnits,
   BASE_MAINNET,
   BASE_SEPOLIA,
   USDC_BASE,
@@ -69,12 +70,23 @@ test('payment option matches the on-chain USDC contract', () => {
   const opt = buildCertifyPaymentOption({ payTo: PAY_TO });
   assert.equal(opt.price.asset, '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913');
   assert.equal(opt.network, BASE_MAINNET);
-  assert.equal(opt.price.amount, RUN_PRICE_USDC);
+  // Atomic units, not the decimal display price — a payer signs this number
+  // directly, and a decimal here is what broke the first real payment.
+  assert.equal(opt.price.amount, toAtomicUnits(RUN_PRICE_USDC, 6).toString());
+  assert.equal(opt.price.amount, '100000');
 });
 
 test('a malformed payout address is refused', () => {
   assert.throws(() => buildCertifyPaymentOption({ payTo: 'not-an-address' }), /payTo/);
   assert.throws(() => buildCertifyPaymentOption({ payTo: '' }), /payTo/);
+});
+
+test('toAtomicUnits converts a decimal price to the atomic units a payer signs', () => {
+  assert.equal(toAtomicUnits('0.10', 6), 100000n);
+  assert.equal(toAtomicUnits('1', 6), 1000000n);
+  assert.equal(toAtomicUnits('0', 6), 0n);
+  assert.equal(toAtomicUnits('123.456789', 6), 123456789n);
+  assert.throws(() => toAtomicUnits('0.1234567', 6), /more than 6 decimal places/);
 });
 
 test('facilitator timeout fails closed', async () => {

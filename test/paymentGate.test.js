@@ -29,7 +29,7 @@ import {
   resolvePayTo,
   PAID_ROUTE,
 } from '../src/lib/paymentGate.js';
-import { RUN_PRICE_USDC, USDC_BASE, BASE_MAINNET } from '../src/lib/payment.js';
+import { RUN_PRICE_USDC, USDC_BASE, BASE_MAINNET, toAtomicUnits } from '../src/lib/payment.js';
 
 const PAY_TO = '0x1111111111111111111111111111111111111111';
 
@@ -168,7 +168,11 @@ test('an unpaid request to the paid route is answered with a 402, not a run', as
     assert.equal(accepts.network, BASE_MAINNET);
     assert.equal(accepts.payTo, PAY_TO);
     assert.equal(accepts.asset, USDC_BASE.address);
-    assert.equal(accepts.amount, RUN_PRICE_USDC);
+    // Atomic units, not the decimal display price. This is the exact field a
+    // payer signs as a raw EIP-3009 value — a decimal here is what let the
+    // first real payment attempt fail with "Cannot convert 0.10 to a BigInt",
+    // and this assertion previously checked the broken value and passed.
+    assert.equal(accepts.amount, toAtomicUnits(RUN_PRICE_USDC, 6).toString());
     // The field that matters most and is easiest to lose. Without it a paying
     // client cannot build the signing domain and gives up before sending
     // anything, which looks from our side like nobody wanted to pay.
@@ -207,7 +211,7 @@ test('the served payment option carries the EIP-712 domain a payer must sign wit
   const accepts = routes[PAID_ROUTE].accepts;
   assert.equal(accepts.network, BASE_MAINNET);
   assert.equal(accepts.payTo, PAY_TO);
-  assert.equal(accepts.price.amount, RUN_PRICE_USDC);
+  assert.equal(accepts.price.amount, toAtomicUnits(RUN_PRICE_USDC, 6).toString());
   assert.equal(accepts.price.asset, USDC_BASE.address);
   assert.deepEqual(accepts.price.extra, { name: 'USD Coin', version: '2' });
 });
