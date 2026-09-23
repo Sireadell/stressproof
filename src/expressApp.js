@@ -24,7 +24,7 @@ import { readFile } from 'node:fs/promises';
 import { issueChallenge, issueStandingRun, verifyConsent, CONSENT_MODE } from './lib/consent.js';
 import { runCertification, toReport } from './lib/runCertification.js';
 import { signReport, verifyCertificate, getSignerAddress } from './lib/attestation.js';
-import { resolvePaymentConfig, buildCertifyPaymentOption, RUN_PRICE_USDC } from './lib/payment.js';
+import { RUN_PRICE_USDC } from './lib/payment.js';
 import { createPaymentGate, readPayerFromRequest, paymentMatchesConsent } from './lib/paymentGate.js';
 import { MAX_REQUESTS_PER_RUN, PROBE_ORDER, CANARY_TOKEN, CONSENT_POLICY } from './lib/spec.js';
 import { explainVerdict, explainerStatus } from './lib/explain.js';
@@ -203,13 +203,19 @@ export function createApp({ demoAllowlist = [], payment = createPaymentGate() } 
 
   // --- what this is, in machine-readable form ------------------------------
   app.get('/about', (_req, res) => {
-    const config = resolvePaymentConfig();
+    // Read the network off the gate, which resolved it once at boot and
+    // survives a bad config. Resolving it again here throws on exactly the
+    // deployments that most need explaining, turning the endpoint whose job
+    // is to say what is wrong into a 500 that says nothing. A gate that is
+    // off or misconfigured carries no config at all, and a null network is
+    // the honest answer to "which chain is this deployment charging on".
+    const network = payment.config?.network ?? null;
     res.json({
       product: 'StressProof',
       claim: 'We do not check whether your agent is correct. We check whether it tells you when it cannot answer.',
       probes: PROBE_ORDER,
       maxRequestsPerRun: MAX_REQUESTS_PER_RUN,
-      price: { amount: RUN_PRICE_USDC, currency: 'USDC', network: config.network, per: 'run' },
+      price: { amount: RUN_PRICE_USDC, currency: 'USDC', network, per: 'run' },
       // Stated plainly rather than inferred from whether a 402 comes back,
       // so nobody has to probe the paid route to find out what it will do.
       payment: {

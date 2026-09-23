@@ -81,6 +81,37 @@ test('/about publishes the probe list, the price and the signing address', async
   assert.ok(body.limitations.length > 0, 'the honesty list must never be empty');
 });
 
+test('/about still answers when the payment config is unusable', async () => {
+  // Shipped broken once: /about resolved the payment config a second time, on
+  // its own, outside the gate. On a deployment whose payment settings did not
+  // resolve, the endpoint whose entire job is to say what is wrong answered
+  // 500 instead, so the only way to find out was to read the service's logs.
+  const app = createApp({
+    payment: createPaymentGate({
+      env: {
+        STRESSPROOF_PAY_TO: '0x1111111111111111111111111111111111111111',
+        STRESSPROOF_NETWORK: 'arc',
+        STRESSPROOF_FACILITATOR: 'xpay',
+      },
+    }),
+  });
+  const local = app.listen(0, '127.0.0.1');
+  await new Promise((resolve) => local.once('listening', resolve));
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${local.address().port}/about`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.payment.status, 'misconfigured');
+    assert.equal(body.payment.paidRunsAvailable, false);
+    // Null, not a chain it is not actually charging on.
+    assert.equal(body.price.network, null);
+    assert.match(body.payment.note, /does not settle arc/);
+  } finally {
+    local.close();
+  }
+});
+
 test('a run request without a sample body is refused, and the refusal explains why', async () => {
   const { status, body } = await req('POST', '/runs', {
     targetUrl: 'https://example.com/agent',
