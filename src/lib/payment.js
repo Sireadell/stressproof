@@ -27,13 +27,20 @@
 // Coinbase's CDP facilitator also settles mainnet but requires an account and
 // API keys, so it is not the default — no owner-side signup blocks the build.
 
+// Circle's own facilitator is the only one of the three that settles Arc.
+// Confirmed live against GET https://gateway-api.circle.com/v1/x402/supported,
+// which lists eip155:5042 alongside Ethereum, Base and the rest; xpay's and
+// 0xarchive's own /supported lists were checked the same way and carry no Arc
+// entry at all, so pointing an Arc deployment at either would 402 forever.
 const FACILITATORS = Object.freeze({
   xpay: 'https://facilitator.xpay.sh',
   '0xarchive': 'https://facilitator.0xarchive.io',
+  circle: 'https://gateway-api.circle.com/v1/x402',
 });
 
 export const BASE_MAINNET = 'eip155:8453';
 export const BASE_SEPOLIA = 'eip155:84532';
+export const ARC_MAINNET = 'eip155:5042';
 
 /**
  * USDC on Base, verified on-chain on Day 2 via eth_call against
@@ -64,6 +71,39 @@ export const USDC_BASE_SEPOLIA = Object.freeze({
   decimals: 6,
   eip712Domain: Object.freeze({ name: 'USDC', version: '2' }),
 });
+
+/**
+ * USDC on Arc.
+ *
+ * Arc does NOT follow the pattern the two Base entries above use. Everywhere
+ * else the EIP-712 domain belongs to the USDC token itself and the payer signs
+ * against the token address. Circle's Arc settlement signs against its
+ * GatewayWalletBatched contract instead, so the domain carries an explicit
+ * `verifyingContract` that is not the asset. Taken from Circle's own
+ * /supported response, not from a docs table. Getting this wrong does not
+ * fail loudly: the signature verifies against the wrong contract and the
+ * facilitator rejects every payment as "unsupported_scheme".
+ */
+export const USDC_ARC = Object.freeze({
+  address: '0x3600000000000000000000000000000000000000',
+  decimals: 6,
+  eip712Domain: Object.freeze({
+    name: 'GatewayWalletBatched',
+    version: '1',
+    verifyingContract: '0x77777777dcc4d5a8b6e418fd04d8997ef11000ee',
+  }),
+});
+
+/**
+ * How long an Arc payment authorization must stay valid.
+ *
+ * Circle publishes minValiditySeconds 604800 (one week) for Arc and refuses
+ * anything shorter as "authorization_validity_too_short". Advertising exactly
+ * 604800 still fails, because the payer signs `validBefore` from its own clock
+ * and the window has already shrunk below the minimum by the time the
+ * facilitator checks it. The extra day is that headroom, not a preference.
+ */
+export const ARC_AUTH_VALIDITY_SECONDS = 604800 + 86400;
 
 /**
  * Price of one certification run. Per run, never per probe.
@@ -99,9 +139,45 @@ export function toAtomicUnits(decimal, decimals) {
  * config coherently — network, token and domain together — so a half-switched
  * state (mainnet network, testnet token) is not expressible.
  */
+const NETWORKS = Object.freeze({
+  base: Object.freeze({
+    caip2: BASE_MAINNET,
+    token: USDC_BASE,
+    isTestnet: false,
+    defaultFacilitator: 'xpay',
+    settledBy: Object.freeze(['xpay', '0xarchive']),
+    authValiditySeconds: null,
+  }),
+  sepolia: Object.freeze({
+    caip2: BASE_SEPOLIA,
+    token: USDC_BASE_SEPOLIA,
+    isTestnet: true,
+    defaultFacilitator: 'xpay',
+    settledBy: Object.freeze(['xpay']),
+    authValiditySeconds: null,
+  }),
+  arc: Object.freeze({
+    caip2: ARC_MAINNET,
+    token: USDC_ARC,
+    isTestnet: false,
+    defaultFacilitator: 'circle',
+    settledBy: Object.freeze(['circle']),
+    authValiditySeconds: ARC_AUTH_VALIDITY_SECONDS,
+  }),
+});
+
 export function resolvePaymentConfig(env = process.env) {
-  const useTestnet = env.STRESSPROOF_NETWORK === 'sepolia';
-  const facilitatorKey = env.STRESSPROOF_FACILITATOR || 'xpay';
+  const requested = (env.STRESSPROOF_NETWORK ?? '').trim().toLowerCase();
+  const networkKey = requested || 'base';
+  const network = NETWORKS[networkKey];
+
+  if (!network) {
+    throw new Error(
+      `Unknown network '${requested}'. Known: ${Object.keys(NETWORKS).join(', ')}`,
+    );
+  }
+
+  const facilitatorKey = env.STRESSPROOF_FACILITATOR || network.defaultFacilitator;
   const facilitatorUrl = FACILITATORS[facilitatorKey];
 
   if (!facilitatorUrl) {
@@ -109,20 +185,25 @@ export function resolvePaymentConfig(env = process.env) {
       `Unknown facilitator '${facilitatorKey}'. Known: ${Object.keys(FACILITATORS).join(', ')}`,
     );
   }
-  if (useTestnet && facilitatorKey === '0xarchive') {
-    // Caught at boot rather than at first payment: 0xarchive serves mainnet
-    // and HyperEVM only, so this combination would 402 forever with a
-    // confusing error.
-    throw new Error("Facilitator '0xarchive' does not settle Base Sepolia — use xpay for testnet.");
+  // Caught at boot rather than at first payment. A facilitator that does not
+  // settle the chosen chain does not fail on startup by itself: it 402s
+  // forever with a confusing error, which is the expensive way to learn this.
+  if (!network.settledBy.includes(facilitatorKey)) {
+    throw new Error(
+      `Facilitator '${facilitatorKey}' does not settle ${networkKey} (${network.caip2}) — ` +
+        `use ${network.settledBy.join(' or ')}.`,
+    );
   }
 
   return {
-    network: useTestnet ? BASE_SEPOLIA : BASE_MAINNET,
-    token: useTestnet ? USDC_BASE_SEPOLIA : USDC_BASE,
+    network: network.caip2,
+    networkKey,
+    token: network.token,
     facilitatorUrl,
     facilitatorKey,
     price: RUN_PRICE_USDC,
-    isTestnet: useTestnet,
+    isTestnet: network.isTestnet,
+    authValiditySeconds: network.authValiditySeconds,
   };
 }
 
@@ -148,6 +229,11 @@ export function buildCertifyPaymentOption({ payTo, config = resolvePaymentConfig
     scheme: 'exact',
     network: config.network,
     payTo,
+    // Only set where the chain demands it. Arc's settlement refuses an
+    // authorization whose window is shorter than Circle's published minimum,
+    // and the payer builds `validBefore` from this number, so leaving it off
+    // on Arc means every payment is rejected before any money moves.
+    ...(config.authValiditySeconds ? { maxTimeoutSeconds: config.authValiditySeconds } : {}),
     price: {
       // Atomic units, not the decimal display price. See toAtomicUnits above
       // for why: an object-shaped price is treated as already-atomic and

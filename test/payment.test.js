@@ -16,6 +16,7 @@ import {
   toAtomicUnits,
   BASE_MAINNET,
   BASE_SEPOLIA,
+  ARC_MAINNET,
   USDC_BASE,
   RUN_PRICE_USDC,
 } from '../src/lib/payment.js';
@@ -47,8 +48,44 @@ test('sepolia switch flips network AND token together', () => {
 test('a facilitator that cannot settle the chosen network fails at boot, not at first payment', () => {
   assert.throws(
     () => resolvePaymentConfig({ STRESSPROOF_NETWORK: 'sepolia', STRESSPROOF_FACILITATOR: '0xarchive' }),
-    /does not settle Base Sepolia/,
+    /does not settle sepolia/,
   );
+  // Arc is settled by Circle alone. Both Base facilitators publish /supported
+  // lists with no Arc entry, so either would 402 forever.
+  assert.throws(
+    () => resolvePaymentConfig({ STRESSPROOF_NETWORK: 'arc', STRESSPROOF_FACILITATOR: 'xpay' }),
+    /does not settle arc/,
+  );
+  assert.throws(() => resolvePaymentConfig({ STRESSPROOF_NETWORK: 'nonsense' }), /Unknown network/);
+});
+
+test('Arc bills in Arc USDC, through Circle, against the Gateway signing domain', () => {
+  const config = resolvePaymentConfig({ STRESSPROOF_NETWORK: 'arc' });
+  assert.equal(config.network, ARC_MAINNET);
+  // Circle is the default for Arc, so no deployment has to know to set it.
+  assert.equal(config.facilitatorKey, 'circle');
+  assert.equal(config.token.address, '0x3600000000000000000000000000000000000000');
+
+  const opt = buildCertifyPaymentOption({ payTo: PAY_TO, config });
+  assert.equal(opt.network, ARC_MAINNET);
+  // The domain a payer signs against on Arc is Circle's Gateway contract, not
+  // the USDC token. Signing against the token is rejected as an unsupported
+  // scheme, which looks like a broken payer rather than a wrong domain.
+  assert.equal(opt.price.extra.name, 'GatewayWalletBatched');
+  assert.equal(opt.price.extra.verifyingContract, '0x77777777dcc4d5a8b6e418fd04d8997ef11000ee');
+  assert.notEqual(opt.price.extra.verifyingContract, opt.price.asset);
+  // Below Circle's published one-week minimum the payment is refused before
+  // any money moves, so the window must be advertised and must clear it.
+  assert.ok(opt.maxTimeoutSeconds > 604800, 'must exceed Circle minValiditySeconds');
+  assert.equal(opt.price.amount, toAtomicUnits(RUN_PRICE_USDC, 6).toString());
+});
+
+test('Base keeps signing against the token, and advertises no forced window', () => {
+  const opt = buildCertifyPaymentOption({ payTo: PAY_TO, config: resolvePaymentConfig({}) });
+  assert.equal(opt.network, BASE_MAINNET);
+  assert.equal(opt.price.extra.name, 'USD Coin');
+  assert.equal(opt.price.extra.verifyingContract, undefined);
+  assert.equal(opt.maxTimeoutSeconds, undefined);
 });
 
 test('the EIP-712 domain sits in price.extra, where a payer actually looks', () => {
