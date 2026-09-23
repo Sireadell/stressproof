@@ -68,7 +68,7 @@ export const USDC_BASE_SEPOLIA = Object.freeze({
 /**
  * Price of one certification run. Per run, never per probe.
  */
-export const RUN_PRICE_USDC = '0.10';
+export const RUN_PRICE_USDC = '0.005';
 
 /**
  * A human-readable decimal amount, in atomic units for a token with the given

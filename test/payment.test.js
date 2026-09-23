@@ -73,7 +73,7 @@ test('payment option matches the on-chain USDC contract', () => {
   // Atomic units, not the decimal display price — a payer signs this number
   // directly, and a decimal here is what broke the first real payment.
   assert.equal(opt.price.amount, toAtomicUnits(RUN_PRICE_USDC, 6).toString());
-  assert.equal(opt.price.amount, '100000');
+  assert.equal(opt.price.amount, '5000');
 });
 
 test('a malformed payout address is refused', () => {
