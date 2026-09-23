@@ -108,6 +108,35 @@ test('the gate has three states, not two', () => {
   assert.ok(live.middleware, 'a live gate must actually mount a door');
 });
 
+test('an unpayable network combination closes the gate instead of crashing the process', () => {
+  // The gate is built at module load in src/index.js, outside any try/catch,
+  // so a throw here does not disable payment: it takes the whole service down
+  // and Render keeps serving the previous deploy. That failure is silent from
+  // the outside, which is how a live deployment can quietly ignore the very
+  // setting someone just changed.
+  const env = {
+    STRESSPROOF_PAY_TO: '0x1111111111111111111111111111111111111111',
+    STRESSPROOF_NETWORK: 'arc',
+    STRESSPROOF_FACILITATOR: 'xpay',
+  };
+  let gate;
+  assert.doesNotThrow(() => {
+    gate = createPaymentGate({ env });
+  });
+  assert.equal(gate.mode, 'misconfigured');
+  assert.equal(gate.enabled, false);
+  assert.equal(gate.middleware, null);
+  // The reason has to name the actual problem, since this is the only place
+  // it will be visible from outside the box.
+  assert.match(gate.reason, /does not settle arc/);
+
+  const unknown = createPaymentGate({
+    env: { STRESSPROOF_PAY_TO: '0x1111111111111111111111111111111111111111', STRESSPROOF_NETWORK: 'nope' },
+  });
+  assert.equal(unknown.mode, 'misconfigured');
+  assert.match(unknown.reason, /Unknown network/);
+});
+
 test('a missing payout address refuses the paid run instead of giving it away', async () => {
   // The whole point of separating "misconfigured" from "off". This is what a
   // deployment looks like when someone forgets one environment variable.

@@ -124,7 +124,24 @@ export function createPaymentGate({
     };
   }
 
-  const config = resolvePaymentConfig(env);
+  // Same reasoning as the missing-payout branch above, applied to the rest of
+  // the payment settings. A bad network or a facilitator that cannot settle it
+  // is a payment problem, and taking the whole process down over it would also
+  // take down the free demo and the verification endpoints, which do not
+  // charge for anything. The gate closes and says why; the service stays up.
+  let config;
+  try {
+    config = resolvePaymentConfig(env);
+  } catch (error) {
+    return {
+      mode: 'misconfigured',
+      enabled: false,
+      price: RUN_PRICE_USDC,
+      middleware: null,
+      reason: `paid runs are unavailable: ${error.message}`,
+    };
+  }
+
   const server =
     resourceServer ??
     new x402ResourceServer(new HTTPFacilitatorClient({ url: config.facilitatorUrl })).register(
