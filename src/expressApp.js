@@ -193,6 +193,17 @@ export function createApp({ demoAllowlist = [], payment = createPaymentGate() } 
   // behind it either way.
   app.set('trust proxy', 1);
 
+  // Other sites (the Anna app) may call the free demo from a browser. Only
+  // this route, and `*` is safe because it takes no cookies or credentials
+  // and the per-address budget still applies to every caller.
+  app.use('/demo/certify', (req, res, next) => {
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'content-type');
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+    next();
+  });
+
   app.use(express.json({ limit: '256kb' }));
   app.use(express.static(path.join(__dirname, '..', 'public')));
 

@@ -177,6 +177,34 @@ test('the free demo refuses an unknown demo mode and lists the real ones', async
   assert.ok(Array.isArray(body.allowed) && body.allowed.includes('honest'));
 });
 
+test('a browser on another site may call the free demo, without spending the budget to ask', async () => {
+  const pre = await fetch(base + '/demo/certify', {
+    method: 'OPTIONS',
+    headers: {
+      origin: 'https://anna.partners',
+      'access-control-request-method': 'POST',
+      'access-control-request-headers': 'content-type',
+    },
+  });
+  assert.equal(pre.status, 204);
+  assert.equal(pre.headers.get('access-control-allow-origin'), '*');
+  assert.match(pre.headers.get('access-control-allow-headers'), /content-type/);
+
+  // The real answer must carry the header too, or the browser hides it.
+  const refused = await fetch(base + '/demo/certify', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ demoMode: 'nonsense' }),
+  });
+  assert.equal(refused.status, 400);
+  assert.equal(refused.headers.get('access-control-allow-origin'), '*');
+});
+
+test('cross-site access stops at the free demo', async () => {
+  const res = await fetch(base + '/about');
+  assert.equal(res.headers.get('access-control-allow-origin'), null);
+});
+
 test('certifying our own honest demo agent produces a stored, signed, verifiable report', async () => {
   const stored = honestRun;
   assert.ok(stored.id, 'a report must get an id');
