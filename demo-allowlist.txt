@@ -1,0 +1,6 @@
+# Agents the free demo (POST /demo/certify) may run against.
+# One URL prefix per line. Only add an agent whose owner has agreed to be tested.
+# Read at startup, so a change goes live on the next deploy.
+
+# Ward, the demo clinic assistant for Suture (our own agent).
+https://suture-47gy.onrender.com
