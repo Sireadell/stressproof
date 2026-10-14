@@ -302,7 +302,7 @@ test('a certificate signed by somebody else is internally consistent but not our
 // Left until last on purpose: it spends the shared free-run budget.
 test('the free demo stops the same caller after a few runs', async () => {
   let sawLimit = false;
-  for (let i = 0; i < 6 && !sawLimit; i += 1) {
+  for (let i = 0; i < 12 && !sawLimit; i += 1) {
     const { status, body } = await req('POST', '/demo/certify', { demoMode: 'honest' });
     if (status === 429) {
       sawLimit = true;
@@ -516,7 +516,7 @@ test('one visitor behind the proxy still hits the per-address ceiling', async ()
   // exists to avoid.
   const ip = '203.0.113.99';
   let sawLimit = false;
-  for (let i = 0; i < 5 && !sawLimit; i += 1) {
+  for (let i = 0; i < 12 && !sawLimit; i += 1) {
     const res = await fetch(base + '/demo/certify', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-forwarded-for': ip },

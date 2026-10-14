@@ -52,14 +52,14 @@ const reports = new Map();
 /** Free demo budget, so an open route cannot become the abuse vector the
  *  paid route was designed to prevent. */
 const demoState = { day: new Date().toDateString(), used: 0, byIp: new Map() };
-// Defaults stay at 40 and 3. A deployment can raise them by setting
+// Defaults are 80 and 8: the page's compare button runs four agents in a row. A deployment can raise them by setting
 // STRESSPROOF_DEMO_DAILY_LIMIT and STRESSPROOF_DEMO_PER_IP_LIMIT.
 function limitFromEnv(name, fallback) {
   const n = Number.parseInt(process.env[name] ?? '', 10);
   return Number.isInteger(n) && n > 0 ? n : fallback;
 }
-const DEMO_DAILY_LIMIT = limitFromEnv('STRESSPROOF_DEMO_DAILY_LIMIT', 40);
-const DEMO_PER_IP_LIMIT = limitFromEnv('STRESSPROOF_DEMO_PER_IP_LIMIT', 3);
+const DEMO_DAILY_LIMIT = limitFromEnv('STRESSPROOF_DEMO_DAILY_LIMIT', 80);
+const DEMO_PER_IP_LIMIT = limitFromEnv('STRESSPROOF_DEMO_PER_IP_LIMIT', 8);
 
 function demoBudgetCheck(ip) {
   const today = new Date().toDateString();

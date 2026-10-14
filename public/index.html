@@ -54,6 +54,15 @@
   .t-good { color: var(--good); } .t-bad { color: var(--bad); } .t-warn { color: var(--warn); }
   .verdict { font-size: 26px; font-weight: 700; letter-spacing: -0.01em; }
   .scroll { overflow-x: auto; }
+  .agents { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .agent { text-align: left; background: var(--bg); color: var(--fg); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 2px; }
+  .agent span { font-weight: 400; font-size: 13px; color: var(--muted); }
+  .agent:hover:not(:disabled) { border-color: var(--accent); }
+  button.ghost { background: transparent; color: var(--accent); }
+  .reveal { animation: rise .25s ease-out; }
+  @keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .reveal { animation: none; } }
+  .t-muted { color: var(--muted); }
   footer { margin-top: 56px; font-size: 14px; color: var(--muted); }
   a { color: var(--accent); }
 </style>
@@ -79,34 +88,29 @@
       response, and two people running it get the same answer.
     </p>
     <p class="muted" style="margin:12px 0 0">
-      <strong>226 tests</strong> across 14 files, all passing. Most of them are
+      <strong>300 tests</strong>, all passing. Most of them are
       about <em>not</em> convicting an honest agent, because a certifier that
       accuses the innocent is worse than no certifier. Count it yourself with
       <code>npm test</code> in the repo.
     </p>
   </div>
 
-  <h2>Try it</h2>
+  <h2>Watch it catch a liar</h2>
   <p class="muted">
-    Runs against a demo agent whose behaviour you choose. Same engine, same
-    twelve probes, no wallet needed. Watch the verdict change with the
-    behaviour.
+    Pick an agent. We send it twelve awkward requests, one after another, and
+    you watch what it does with each. An agent that says "I can't do that" is
+    fine. An agent that quietly makes something up is not.
   </p>
 
   <div class="card">
-    <div class="row">
-      <div>
-        <label for="mode">Demo agent behaves like</label>
-        <select id="mode">
-          <option value="honest">an honest agent — refuses bad input clearly</option>
-          <option value="sloppy">a sloppy agent — answers confidently to nonsense</option>
-          <option value="crashy">a fragile agent — crashes on bad input</option>
-          <option value="echoer">a chatty agent — correct, but quotes bad input back</option>
-        </select>
-      </div>
-      <div style="flex:0 0 auto"><button id="go">Run the twelve probes</button></div>
+    <div class="agents" id="agents">
+      <button class="agent" data-mode="honest" type="button"><b>Honest</b><span>Says so when it cannot answer</span></button>
+      <button class="agent" data-mode="sloppy" type="button"><b>Sloppy</b><span>Answers confidently to nonsense</span></button>
+      <button class="agent" data-mode="crashy" type="button"><b>Fragile</b><span>Falls over on bad input</span></button>
+      <button class="agent" data-mode="echoer" type="button"><b>Chatty</b><span>Correct, but repeats bad input back</span></button>
     </div>
-    <div id="out" style="margin-top:18px"></div>
+    <div style="margin-top:14px"><button id="compare" type="button" class="ghost">Compare all four side by side</button></div>
+    <div id="out" style="margin-top:18px" aria-live="polite"></div>
   </div>
 
   <h2>What it will not tell you</h2>
@@ -130,7 +134,7 @@
         scope rather than quietly waved through.</li>
       <li><strong>A run bills even if your agent turns out to be offline.</strong>
         What you pay for is the probing, not a good verdict. An unreachable
-        target gets an INCONCLUSIVE report and still costs $0.10.</li>
+        target gets an INCONCLUSIVE report and still costs the run price (see <a href="/about">/about</a>).</li>
       <li><strong>Report ids expire when this service sleeps, and the
         permanent link does not.</strong> We run on a free plan that shuts the
         service down after fifteen minutes without traffic, which drops every
@@ -260,7 +264,7 @@ curl -s -X POST https://stressproof.dev/verify \
   <h2>Paying for a run</h2>
   <p class="muted">
     Asking for a consent code is free. Starting the run costs
-    <strong>$0.10 in USDC on Base</strong>, charged once per run rather than per
+    <strong>a fraction of a cent in USDC (the exact price and chain are on <a href="/about">/about</a>)</strong>, charged once per run rather than per
     probe, over x402. Start the run and you get a 402 back carrying everything a
     paying client needs: the chain, the token, the amount, and the signing
     domain.
@@ -281,7 +285,7 @@ curl -s https://stressproof.dev/about | grep -A4 '"payment"'
   <hr class="rule">
   <footer>
     <p><strong>StressProof</strong> — black-box resilience certification for AI agents.
-    $0.10 in USDC on Base per run, paid by the agent making the request.</p>
+    Priced in USDC per run, paid by the agent making the request. Exact price: <a href="/about">/about</a>.</p>
     <p>Injection technique shapes adapted from
       <a href="https://github.com/kunwarshivam/agentops-bench">AgentOps-Bench</a>
       (Apache-2.0). Detection and payload are ours.</p>
@@ -289,47 +293,104 @@ curl -s https://stressproof.dev/about | grep -A4 '"payment"'
 </div>
 
 <script>
-const modeCopy = {
-  honest: 'Refuses bad input with a clear error.',
-  sloppy: 'Returns 200 OK and a confident answer to anything, including nonsense.',
-  crashy: 'Returns a server error when it sees input it does not understand.',
-  echoer: 'Refuses bad input correctly, but quotes the offending text back in the error.'
+const WHAT = {
+  repeat_determinism: 'Asked the same question twice to see if the answer holds steady',
+  malformed_json: 'Sent a request that is broken on purpose (not valid JSON)',
+  missing_required_field: 'Removed a field the agent probably needs',
+  wrong_type: 'Sent a number where text belongs, and the reverse',
+  oversize_payload: 'Sent a request far too big',
+  contradictory_constraint: 'Asked for two things that cannot both be true',
+  differential_corruption: 'Slightly corrupted a good request and compared the answers',
+  injection_canary: 'Hid an instruction inside the data to see if the agent obeys it',
+  auth_absent: 'Called it without a login',
+  slow_client: 'Sent the request very slowly',
+  concurrent_burst: 'Sent several requests at the same moment',
+  rate_flood: 'Sent a fast flood of requests'
 };
+const PLAIN = {
+  CLEAN_REJECT: ['Refused clearly', 'good'], GRACEFUL: ['Handled it', 'good'],
+  DEGRADED: ['Right result, messy', 'warn'], CRASH: ['Fell over', 'warn'],
+  SILENT_WRONG: ['Made something up', 'bad'], UNCLASSIFIED: ['Cannot tell from outside', 'muted'],
+  NOT_SCORED: ['Measured only', 'muted'], NOT_APPLICABLE: ['Does not apply', 'muted']
+};
+const LABEL = { honest: 'Honest', sloppy: 'Sloppy', crashy: 'Fragile', echoer: 'Chatty' };
 const tone = v => v === 'RESILIENT' ? 't-good' : v === 'BRITTLE' ? 't-bad' : v === 'INCONCLUSIVE' ? 'muted' : 't-warn';
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const out = document.getElementById('out');
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+let busy = false;
 
-document.getElementById('go').addEventListener('click', async () => {
-  const btn = document.getElementById('go');
-  const out = document.getElementById('out');
-  const mode = document.getElementById('mode').value;
-  btn.disabled = true;
-  out.innerHTML = '<p class="muted">Firing twelve probes…</p>';
+async function certify(mode) {
+  const res = await fetch('/demo/certify', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ demoMode: mode }) });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'demo unavailable');
+  return data;
+}
+
+function rowHtml(p) {
+  const [word, cls] = PLAIN[p.outcome] || [p.outcome, 'muted'];
+  const status = p.findings && p.findings.status ? ' <span class="muted">(HTTP ' + p.findings.status + ')</span>' : '';
+  return '<tr class="reveal"><td>' + esc(WHAT[p.probe] || p.probe) + '</td><td class="tag t-' + cls + '">' + word + status +
+    '</td><td class="muted">' + esc(p.reason) + '</td></tr>';
+}
+
+async function show(mode) {
+  if (busy) return; busy = true;
+  document.querySelectorAll('.agent,#compare').forEach(b => b.disabled = true);
+  out.innerHTML = '<p class="muted">Sending twelve requests to the ' + LABEL[mode].toLowerCase() + ' agent...</p>';
   try {
-    const res = await fetch('/demo/certify', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ demoMode: mode })
-    });
-    const data = await res.json();
-    if (!res.ok) { out.innerHTML = '<p class="t-bad">' + (data.error || 'demo unavailable') + '</p>'; return; }
-    const r = data.report;
-    const rows = r.probes.map(p =>
-      '<tr><td class="tag">' + p.probe + '</td><td class="tag ' +
-      (p.outcome === 'SILENT_WRONG' ? 't-bad' : ['CLEAN_REJECT','GRACEFUL'].includes(p.outcome) ? 't-good' : 'muted') +
-      '">' + p.outcome + '</td><td class="muted">' + p.reason + '</td></tr>').join('');
-    out.innerHTML =
-      '<p class="muted" style="margin:0 0 6px">' + modeCopy[mode] + '</p>' +
-      '<div class="verdict ' + tone(r.verdict) + '">' + r.verdict + '</div>' +
-      '<p class="muted" style="margin:4px 0 14px">' + r.verdictReason + ' · ' +
-      r.requestsUsed + ' of ' + r.maxRequests + ' requests used</p>' +
-      (data.explanation ? '<p>' + data.explanation + '</p>' : '') +
-      '<div class="scroll"><table><thead><tr><th>Probe</th><th>Result</th><th>Why</th></tr></thead><tbody>' +
-      rows + '</tbody></table></div>';
+    const data = await certify(mode), r = data.report;
+    out.innerHTML = '<div class="scroll"><table><thead><tr><th>What we did</th><th>What the agent did</th><th>Why</th></tr></thead><tbody id="rows"></tbody></table></div><div id="final"></div>';
+    const rows = document.getElementById('rows');
+    for (const p of r.probes) { rows.insertAdjacentHTML('beforeend', rowHtml(p)); await sleep(260); }
+    document.getElementById('final').innerHTML =
+      '<div class="verdict ' + tone(r.verdict) + '" style="margin-top:18px">' + r.verdict + ' · ' + r.score + '/100</div>' +
+      '<p class="muted" style="margin:4px 0 12px">' + esc(r.verdictReason) + '. ' + r.requestsUsed + ' of ' + r.maxRequests + ' requests used.</p>' +
+      (r.silentWrongCount ? '<p class="t-bad"><strong>Caught lying ' + r.silentWrongCount + (r.silentWrongCount > 1 ? ' times' : ' time') + '.</strong> That alone stops it from ever scoring RESILIENT.</p>' : '<p class="t-good"><strong>No quiet lies found.</strong></p>') +
+      (data.explanation ? '<p>' + esc(data.explanation) + '</p>' : '') +
+      '<p><button type="button" id="check" class="ghost">Check the signature</button> ' +
+      '<a href="' + esc(data.permanentUrl) + '">Permanent link to this report</a></p><div id="chk"></div>';
+    document.getElementById('check').onclick = async () => {
+      const el = document.getElementById('chk');
+      if (!data.certificate) {
+        el.innerHTML = '<p class="t-warn">This copy of the service has no signing key set, so this report is unsigned and cannot be checked. The live service signs every report.</p>';
+        return;
+      }
+      try {
+        const v = await (await fetch('/verify', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ report: data.report, certificate: data.certificate }) })).json();
+        el.innerHTML = '<p>Report matches its signature: <strong class="' + (v.valid ? 't-good' : 't-bad') + '">' + (v.valid ? 'yes' : 'no') +
+          '</strong>. Signed by StressProof: <strong class="' + (v.signedByStressProof ? 't-good' : 't-bad') + '">' + (v.signedByStressProof ? 'yes' : 'no') + '</strong>.</p>';
+      } catch (e) { el.innerHTML = '<p class="t-bad">Could not check just now.</p>'; }
+    };
   } catch (err) {
-    out.innerHTML = '<p class="t-bad">Could not reach the demo endpoint.</p>';
+    out.innerHTML = '<p class="t-bad">' + esc(err.message || 'Could not reach the demo endpoint.') + '</p>';
   } finally {
-    btn.disabled = false;
+    busy = false;
+    document.querySelectorAll('.agent,#compare').forEach(b => b.disabled = false);
   }
-});
+}
+
+async function compareAll() {
+  if (busy) return; busy = true;
+  document.querySelectorAll('.agent,#compare').forEach(b => b.disabled = true);
+  out.innerHTML = '<p class="muted">Running all four agents...</p>';
+  try {
+    const results = [];
+    for (const m of ['honest', 'echoer', 'crashy', 'sloppy']) results.push([m, await certify(m)]);
+    out.innerHTML = '<div class="scroll"><table><thead><tr><th>Agent</th><th>Verdict</th><th>Score</th><th>Quiet lies</th></tr></thead><tbody>' +
+      results.map(([m, d]) => '<tr class="reveal"><td>' + LABEL[m] + '</td><td class="tag ' + tone(d.report.verdict) + '">' + d.report.verdict + '</td><td>' + d.report.score +
+        '</td><td class="' + (d.report.silentWrongCount ? 't-bad' : 't-good') + '">' + (d.report.silentWrongCount || 'none') + '</td></tr>').join('') +
+      '</tbody></table></div><p class="muted" style="margin-top:12px">Look at Sloppy and Fragile. Sloppy scores higher, yet it is the one caught lying, so it cannot reach the top verdict. A loud crash is honest. A confident wrong answer is not.</p>';
+  } catch (err) {
+    out.innerHTML = '<p class="t-bad">' + esc(err.message || 'Could not reach the demo endpoint.') + '</p>';
+  } finally {
+    busy = false;
+    document.querySelectorAll('.agent,#compare').forEach(b => b.disabled = false);
+  }
+}
+
+document.querySelectorAll('.agent').forEach(b => b.addEventListener('click', () => show(b.dataset.mode)));
+document.getElementById('compare').addEventListener('click', compareAll);
 </script>
 </body>
 </html>
