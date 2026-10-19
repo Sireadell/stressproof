@@ -177,7 +177,7 @@ test('an agent that ignored a corrupted field is caught', () => {
   const r = classifyProbe({
     probe: 'differential_corruption', requestsUsed: 1, skipped: null,
     responses: [{ status: 200, body: '{"answer":"same"}', elapsedMs: 5, networkError: null, refusedByGuard: null }],
-    findings: { status: 200, errorSignalPresent: false, bodyParsedAsJson: true, stableFieldsIdentical: true },
+    findings: { status: 200, errorSignalPresent: false, bodyParsedAsJson: true, identicalAfterStrippingVolatile: true },
   });
   assert.equal(r.outcome, 'SILENT_WRONG');
 });

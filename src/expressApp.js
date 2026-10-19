@@ -29,6 +29,7 @@ import { createPaymentGate, readPayerFromRequest, paymentMatchesConsent } from '
 import { MAX_REQUESTS_PER_RUN, PROBE_ORDER, CANARY_TOKEN, CONSENT_POLICY } from './lib/spec.js';
 import { explainVerdict, explainerStatus } from './lib/explain.js';
 import { encodeCertificateLink, decodeCertificateLink } from './lib/certificateLink.js';
+import { LINEUP, certifyLineupAgent, isLineupMode, judgeLineupEntry, lineupHeadline } from './lib/lineup.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -367,6 +368,23 @@ export function createApp({ demoAllowlist = [], payment = createPaymentGate() } 
   // Two ways in. `demoMode` runs against the deliberately flawed agent WE
   // host, which is what the page uses: no wallet, and no consent question at
   // all, because the target is us. Anything else must be on the allow-list.
+  // The whole lineup in one go: five agents that each tell one kind of lie and
+  // one that tells none. Counts as a single demo run, because it is one click,
+  // and skips the written summary per agent so one click is not six model calls.
+  app.post('/demo/lineup', async (req, res) => {
+    const ip = req.ip ?? 'unknown';
+    const budget = demoBudgetCheck(ip);
+    if (!budget.ok) return res.status(429).json({ error: budget.reason });
+    noteDemoUse(ip);
+    const runs = await Promise.all(LINEUP.map((entry) => certifyLineupAgent(entry.mode)));
+    const results = [];
+    for (let i = 0; i < LINEUP.length; i += 1) {
+      const stored = withAbsoluteLink(await storeReport(runs[i], { explain: false }), req);
+      results.push({ ...judgeLineupEntry(LINEUP[i], stored.report), permanentUrl: stored.permanentUrl ?? null });
+    }
+    res.json({ headline: lineupHeadline(results), results });
+  });
+
   app.post('/demo/certify', async (req, res) => {
     const ip = req.ip ?? 'unknown';
     const budget = demoBudgetCheck(ip);
@@ -508,7 +526,7 @@ export function createApp({ demoAllowlist = [], payment = createPaymentGate() } 
 
 const pendingTargets = new Map();
 
-const DEMO_MODES = ['honest', 'sloppy', 'crashy', 'echoer'];
+const DEMO_MODES = ['honest', 'sloppy', 'crashy', 'echoer', ...LINEUP.filter((e) => e.caughtBy).map((e) => e.mode)];
 
 /**
  * Certify the demo agent this process is hosting.
@@ -526,6 +544,9 @@ const DEMO_MODES = ['honest', 'sloppy', 'crashy', 'echoer'];
  * guard off in production by accident.
  */
 async function certifyOwnDemoAgent(mode) {
+  // Lineup agents are tested with credentials and a full min/max pair, without
+  // which two of their lies could not be proven. See src/lib/lineup.js.
+  if (isLineupMode(mode)) return certifyLineupAgent(mode);
   const { createFakeAgent } = await import('./lib/demoAgent.js');
   const agent = createFakeAgent({ mode });
   const url = await agent.listen();
@@ -544,10 +565,10 @@ async function certifyOwnDemoAgent(mode) {
   }
 }
 
-async function storeReport(run) {
+async function storeReport(run, { explain = true } = {}) {
   const report = toReport(run);
   const certificate = await signReport(report);
-  const explanation = await explainVerdict(report);
+  const explanation = explain ? await explainVerdict(report) : null;
   const id = certificate?.reportHash?.slice(2, 18) ?? Math.random().toString(16).slice(2, 18);
 
   // A null explanation is never left unlabelled. "Switched off", "the model
@@ -556,7 +577,9 @@ async function storeReport(run) {
   const status = explainerStatus();
   const explanationUnavailable = explanation
     ? null
-    : status.configured
+    : !explain
+      ? 'the lineup skips the written summary so one click does not cost six model calls. The verdict and evidence are complete.'
+      : status.configured
       ? 'the explanation model did not answer in time, so this report carries evidence and a verdict without a summary. Nothing about the verdict changes.'
       : status.reason;
 

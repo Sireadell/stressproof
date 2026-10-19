@@ -143,7 +143,9 @@ export function createFakeAgent(opts = {}) {
       result: 'analysis complete',
       answer: state.mode === 'sloppy' ? 'generic answer' : `answer for: ${parsed.query}`,
       request_id: `req_${Math.random().toString(16).slice(2, 10)}`,
-      generated_at: new Date().toISOString(),
+      // Offset by the request count so two answers never share a timestamp;
+      // see the same line in src/lib/demoAgent.js for why.
+      generated_at: new Date(Date.now() + state.requestCount).toISOString(),
     };
     return send(200, body);
   });

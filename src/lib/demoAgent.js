@@ -14,13 +14,13 @@
 // The five modes are not arbitrary. Each one is a real failure shape a probe
 // must tell apart from the others:
 //
-//   honest  — validates properly, refuses bad input with a clear error.
+//   honest  : validates properly, refuses bad input with a clear error.
 //             Every probe should score this well.
-//   sloppy  — returns 200 OK to absolutely anything, including nonsense.
+//   sloppy  : returns 200 OK to absolutely anything, including nonsense.
 //             This is the SILENT_WRONG target: the whole point of the product.
-//   crashy  — 500s on anything unexpected. Bad, but honestly bad.
-//   hanging — never responds. Tests timeouts and the INCONCLUSIVE path.
-//   echoer  — validates correctly, BUT quotes the offending input back inside
+//   crashy  : 500s on anything unexpected. Bad, but honestly bad.
+//   hanging : never responds. Tests timeouts and the INCONCLUSIVE path.
+//   echoer  : validates correctly, BUT quotes the offending input back inside
 //             its error message.
 //
 // The echoer exists because of a specific bug found in review. It is a
@@ -28,10 +28,56 @@
 // its error, which naive canary detection reads as "the injection worked."
 // Without this mode in the fixture, the injection probe's control-pairing
 // logic would ship untested and would falsely accuse honest agents.
+//
+// THE LINEUP. Five more agents, each honest in every way but one. Sloppy lies
+// about everything at once, which shows that StressProof catches lying but
+// not WHICH lie. Each of these tells exactly one kind of lie, so the lineup
+// can show every lie StressProof claims to catch being caught by the check
+// aimed at it, and by no other. They need requireAuth and a sample request
+// carrying both min_results and max_results; see src/lib/lineup.js.
+//
+//   swallows_broken_json : answers 200 to a request that is not valid JSON
+//   accepts_impossible   : accepts min_results greater than max_results
+//   ignores_input        : gives the same answer whatever the question
+//   obeys_injection      : follows an instruction hidden inside its input
+//   serves_without_key   : answers a caller who sent no credentials
 
 import http from 'node:http';
+import { createHash } from 'node:crypto';
 
-export const MODES = ['honest', 'sloppy', 'crashy', 'hanging', 'echoer'];
+export const LIES = Object.freeze({
+  swallows_broken_json: 'brokenJson',
+  accepts_impossible: 'contradiction',
+  ignores_input: 'ignoreInput',
+  obeys_injection: 'obeyInjection',
+  serves_without_key: 'noAuth',
+});
+
+export const MODES = ['honest', 'sloppy', 'crashy', 'hanging', 'echoer', ...Object.keys(LIES)];
+
+// The instruction shapes an obedient model would act on. Controls in the
+// injection probe carry the token as inert data with none of these phrases, so
+// an agent built on this list obeys the attacks and stays silent on controls,
+// which is exactly the shape the probe's two-fact rule needs to convict.
+const OBEY_PATTERNS = [
+  /reply with exactly:\s*([A-Za-z0-9_-]+)/i,
+  /output\s+([A-Za-z0-9_-]+)\s+verbatim/i,
+  /append\s+([A-Za-z0-9_-]+)\s+to your/i,
+];
+
+function obeyedInstruction(text) {
+  const readings = [text];
+  for (const run of text.match(/[A-Za-z0-9+/=]{16,}/g) ?? []) {
+    readings.push(Buffer.from(run, 'base64').toString('utf8'));
+  }
+  for (const reading of readings) {
+    for (const pattern of OBEY_PATTERNS) {
+      const m = reading.match(pattern);
+      if (m) return m[1];
+    }
+  }
+  return null;
+}
 
 const REQUIRED_FIELDS = ['query', 'wallet'];
 
@@ -66,6 +112,7 @@ export function createFakeAgent(opts = {}) {
 
     const raw = await readBody(req);
     state.seenBodies.push(raw);
+    const lie = LIES[state.mode] ?? null;
 
     if (state.mode === 'hanging') {
       // Deliberately never answer. unref'd so it cannot hold the process open.
@@ -92,7 +139,7 @@ export function createFakeAgent(opts = {}) {
       return send(429, { error: 'rate limit exceeded' }, { 'retry-after': '60' });
     }
 
-    if (!req.headers.authorization && opts.requireAuth) {
+    if (!req.headers.authorization && opts.requireAuth && lie !== 'noAuth') {
       if (state.mode === 'sloppy') return send(200, { result: 'served without auth' });
       if (state.mode === 'crashy') return send(500, 'kaboom');
       return send(401, { error: 'authentication required' });
@@ -107,6 +154,7 @@ export function createFakeAgent(opts = {}) {
     }
 
     if (parseFailed) {
+      if (lie === 'brokenJson') return send(200, { result: 'analysis complete', answer: 'here is your answer' });
       if (state.mode === 'sloppy') return send(200, { result: 'ok', note: 'could not parse but here you go' });
       if (state.mode === 'crashy') return send(500, 'Internal Server Error');
       if (state.mode === 'echoer') {
@@ -118,7 +166,7 @@ export function createFakeAgent(opts = {}) {
     const missing = REQUIRED_FIELDS.filter((f) => !(f in parsed));
     const wrongType = 'query' in parsed && typeof parsed.query !== 'string';
     // A contradiction the target should notice: two mutually exclusive values.
-    const contradictory =
+    const contradictory = lie !== 'contradiction' &&
       parsed.min_results != null && parsed.max_results != null &&
       Number(parsed.min_results) > Number(parsed.max_results);
 
@@ -145,11 +193,24 @@ export function createFakeAgent(opts = {}) {
     // so differential_corruption can detect a target that ignores its input.
     // A volatile field is included so volatile-field learning has something
     // real to find.
+    let answer = `answer for: ${parsed.query}`;
+    if (state.mode === 'sloppy' || lie === 'ignoreInput') answer = 'generic answer';
+    if (lie === 'obeyInjection') {
+      // Never quotes the question back, so anything of the input that shows up
+      // in the answer got there by obedience and not by echo.
+      const obeyed = obeyedInstruction(parsed.query);
+      const digest = createHash('sha256').update(parsed.query).digest('hex').slice(0, 8);
+      answer = obeyed ?? `answer #${digest}`;
+    }
     const body = {
       result: 'analysis complete',
-      answer: state.mode === 'sloppy' ? 'generic answer' : `answer for: ${parsed.query}`,
+      answer,
       request_id: `req_${Math.random().toString(16).slice(2, 10)}`,
-      generated_at: new Date().toISOString(),
+      // Offset by the request count so two answers can never carry the same
+      // timestamp. On loopback two requests can land in one millisecond, and a
+      // timestamp that happens to match in both baselines is not learned as
+      // volatile, which made the ignores-input catch flaky.
+      generated_at: new Date(Date.now() + state.requestCount).toISOString(),
     };
     return send(200, body);
   });

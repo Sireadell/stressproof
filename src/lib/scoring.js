@@ -176,13 +176,17 @@ const classifiers = {
     }
     if (response.status >= 500) return out('CRASH', `server error (HTTP ${response.status})`);
 
-    if (f.stableFieldsIdentical === true) {
+    // The probe writes this fact as identicalAfterStrippingVolatile. This line
+    // once read a different name the probe never wrote, so the check could not
+    // convict anybody: every agent that ignored its input came back "could not
+    // be completed". Each side was tested alone, which is how it slipped by.
+    if (f.identicalAfterStrippingVolatile === true) {
       return out(
         'SILENT_WRONG',
         'returned an identical answer for a corrupted request, so it demonstrably ignored the corrupted field',
       );
     }
-    if (f.stableFieldsIdentical === false) {
+    if (f.identicalAfterStrippingVolatile === false) {
       return out('GRACEFUL', 'the answer changed with the corrupted input, so the field was actually read');
     }
     return out('UNCLASSIFIED', 'the comparison could not be completed');

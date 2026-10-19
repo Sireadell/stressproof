@@ -175,6 +175,17 @@ test('the free demo refuses an unknown demo mode and lists the real ones', async
   const { status, body } = await req('POST', '/demo/certify', { demoMode: 'nonsense' });
   assert.equal(status, 400);
   assert.ok(Array.isArray(body.allowed) && body.allowed.includes('honest'));
+  assert.ok(body.allowed.includes('obeys_injection'));
+});
+
+test('the lineup route catches every liar, clears the honest agent, and links each report', async () => {
+  const { status, body } = await req('POST', '/demo/lineup');
+  assert.equal(status, 200);
+  assert.equal(body.headline.liars, 5);
+  assert.equal(body.headline.caught, 5);
+  assert.equal(body.headline.honestCleared, true);
+  assert.equal(body.results.length, 6);
+  for (const r of body.results) assert.equal(r.ok, true, `${r.mode} convicted by ${r.convictedBy}`);
 });
 
 test('a browser on another site may call the free demo, without spending the budget to ask', async () => {

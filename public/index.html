@@ -88,7 +88,7 @@
       response, and two people running it get the same answer.
     </p>
     <p class="muted" style="margin:12px 0 0">
-      <strong>300 tests</strong>, all passing. Most of them are
+      <strong>311 tests</strong>, all passing. Most of them are
       about <em>not</em> convicting an honest agent, because a certifier that
       accuses the innocent is worse than no certifier. Count it yourself with
       <code>npm test</code> in the repo.
@@ -111,6 +111,25 @@
     </div>
     <div style="margin-top:14px"><button id="compare" type="button" class="ghost">Compare all four side by side</button></div>
     <div id="out" style="margin-top:18px" aria-live="polite"></div>
+  </div>
+
+  <h2>Five liars and one honest agent</h2>
+  <p class="muted">
+    Each of these agents is honest in every way but one. StressProof should
+    catch each lie with the check built for it, and accuse the honest agent of
+    nothing. Click one to watch, or run the whole lineup at once.
+  </p>
+
+  <div class="card">
+    <div class="agents" id="liars">
+      <button class="agent" data-mode="swallows_broken_json" type="button"><b>Swallows garbage</b><span>Answers a request that is not even valid JSON</span></button>
+      <button class="agent" data-mode="accepts_impossible" type="button"><b>Agrees to the impossible</b><span>Accepts "at least 6, at most 5"</span></button>
+      <button class="agent" data-mode="ignores_input" type="button"><b>Ignores the question</b><span>Same answer whatever you ask</span></button>
+      <button class="agent" data-mode="obeys_injection" type="button"><b>Obeys hidden orders</b><span>Follows an instruction tucked inside its input</span></button>
+      <button class="agent" data-mode="serves_without_key" type="button"><b>Lets anyone in</b><span>Answers callers with no credentials</span></button>
+    </div>
+    <div style="margin-top:14px"><button id="lineup" type="button">Run the whole lineup</button></div>
+    <div id="lineupOut" style="margin-top:18px" aria-live="polite"></div>
   </div>
 
   <h2>What it will not tell you</h2>
@@ -313,7 +332,12 @@ const PLAIN = {
   SILENT_WRONG: ['Made something up', 'bad'], UNCLASSIFIED: ['Cannot tell from outside', 'muted'],
   NOT_SCORED: ['Measured only', 'muted'], NOT_APPLICABLE: ['Does not apply', 'muted']
 };
-const LABEL = { honest: 'Honest', sloppy: 'Sloppy', crashy: 'Fragile', echoer: 'Chatty' };
+const LABEL = {
+  honest: 'Honest', sloppy: 'Sloppy', crashy: 'Fragile', echoer: 'Chatty',
+  swallows_broken_json: 'Swallows garbage', accepts_impossible: 'Agrees to the impossible',
+  ignores_input: 'Ignores the question', obeys_injection: 'Obeys hidden orders', serves_without_key: 'Lets anyone in'
+};
+const BUTTONS = '.agent,#compare,#lineup';
 const tone = v => v === 'RESILIENT' ? 't-good' : v === 'BRITTLE' ? 't-bad' : v === 'INCONCLUSIVE' ? 'muted' : 't-warn';
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const out = document.getElementById('out');
@@ -336,22 +360,23 @@ function rowHtml(p) {
 
 async function show(mode) {
   if (busy) return; busy = true;
-  document.querySelectorAll('.agent,#compare').forEach(b => b.disabled = true);
+  const out = document.getElementById(document.querySelector('#liars [data-mode="' + mode + '"]') ? 'lineupOut' : 'out');
+  document.querySelectorAll(BUTTONS).forEach(b => b.disabled = true);
   out.innerHTML = '<p class="muted">Sending twelve requests to the ' + LABEL[mode].toLowerCase() + ' agent...</p>';
   try {
     const data = await certify(mode), r = data.report;
     out.innerHTML = '<div class="scroll"><table><thead><tr><th>What we did</th><th>What the agent did</th><th>Why</th></tr></thead><tbody id="rows"></tbody></table></div><div id="final"></div>';
-    const rows = document.getElementById('rows');
+    const rows = out.querySelector('#rows');
     for (const p of r.probes) { rows.insertAdjacentHTML('beforeend', rowHtml(p)); await sleep(260); }
-    document.getElementById('final').innerHTML =
+    out.querySelector('#final').innerHTML =
       '<div class="verdict ' + tone(r.verdict) + '" style="margin-top:18px">' + r.verdict + ' · ' + r.score + '/100</div>' +
       '<p class="muted" style="margin:4px 0 12px">' + esc(r.verdictReason) + '. ' + r.requestsUsed + ' of ' + r.maxRequests + ' requests used.</p>' +
       (r.silentWrongCount ? '<p class="t-bad"><strong>Caught lying ' + r.silentWrongCount + (r.silentWrongCount > 1 ? ' times' : ' time') + '.</strong> That alone stops it from ever scoring RESILIENT.</p>' : '<p class="t-good"><strong>No quiet lies found.</strong></p>') +
       (data.explanation ? '<p>' + esc(data.explanation) + '</p>' : '') +
       '<p><button type="button" id="check" class="ghost">Check the signature</button> ' +
       '<a href="' + esc(data.permanentUrl) + '">Permanent link to this report</a></p><div id="chk"></div>';
-    document.getElementById('check').onclick = async () => {
-      const el = document.getElementById('chk');
+    out.querySelector('#check').onclick = async () => {
+      const el = out.querySelector('#chk');
       if (!data.certificate) {
         el.innerHTML = '<p class="t-warn">This copy of the service has no signing key set, so this report is unsigned and cannot be checked. The live service signs every report.</p>';
         return;
@@ -366,13 +391,13 @@ async function show(mode) {
     out.innerHTML = '<p class="t-bad">' + esc(err.message || 'Could not reach the demo endpoint.') + '</p>';
   } finally {
     busy = false;
-    document.querySelectorAll('.agent,#compare').forEach(b => b.disabled = false);
+    document.querySelectorAll(BUTTONS).forEach(b => b.disabled = false);
   }
 }
 
 async function compareAll() {
   if (busy) return; busy = true;
-  document.querySelectorAll('.agent,#compare').forEach(b => b.disabled = true);
+  document.querySelectorAll(BUTTONS).forEach(b => b.disabled = true);
   out.innerHTML = '<p class="muted">Running all four agents...</p>';
   try {
     const results = [];
@@ -380,16 +405,40 @@ async function compareAll() {
     out.innerHTML = '<div class="scroll"><table><thead><tr><th>Agent</th><th>Verdict</th><th>Score</th><th>Quiet lies</th></tr></thead><tbody>' +
       results.map(([m, d]) => '<tr class="reveal"><td>' + LABEL[m] + '</td><td class="tag ' + tone(d.report.verdict) + '">' + d.report.verdict + '</td><td>' + d.report.score +
         '</td><td class="' + (d.report.silentWrongCount ? 't-bad' : 't-good') + '">' + (d.report.silentWrongCount || 'none') + '</td></tr>').join('') +
-      '</tbody></table></div><p class="muted" style="margin-top:12px">Look at Sloppy and Fragile. Sloppy scores higher, yet it is the one caught lying, so it cannot reach the top verdict. A loud crash is honest. A confident wrong answer is not.</p>';
+      '</tbody></table></div><p class="muted" style="margin-top:12px">Look at Sloppy and Fragile. Both fall short of the top verdict, but only Sloppy is caught lying. A loud crash is honest. A confident wrong answer is not.</p>';
   } catch (err) {
     out.innerHTML = '<p class="t-bad">' + esc(err.message || 'Could not reach the demo endpoint.') + '</p>';
   } finally {
     busy = false;
-    document.querySelectorAll('.agent,#compare').forEach(b => b.disabled = false);
+    document.querySelectorAll(BUTTONS).forEach(b => b.disabled = false);
+  }
+}
+
+async function runLineup() {
+  if (busy) return; busy = true;
+  const el = document.getElementById('lineupOut');
+  document.querySelectorAll(BUTTONS).forEach(b => b.disabled = true);
+  el.innerHTML = '<p class="muted">Running all six agents at once, twelve checks each...</p>';
+  try {
+    const res = await fetch('/demo/lineup', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'lineup unavailable');
+    el.innerHTML = '<p class="verdict ' + (data.headline.caught === data.headline.liars && data.headline.honestCleared ? 't-good' : 't-bad') + '" style="font-size:20px">' + esc(data.headline.sentence) + '</p>' +
+      '<div class="scroll"><table><thead><tr><th>Agent</th><th>Its lie</th><th>Caught by</th><th>Verdict</th></tr></thead><tbody>' +
+      data.results.map(r => '<tr class="reveal"><td>' + esc(LABEL[r.mode] || r.mode) + '</td><td class="muted">' + esc(r.lie || 'None') +
+        '</td><td class="' + (r.ok ? 't-good' : 't-bad') + '">' + (r.convictedBy.length ? r.convictedBy.map(p => esc(WHAT[p] || p)).join('; ') : (r.caughtBy ? 'Missed' : 'Nothing, correctly')) +
+        '</td><td class="tag ' + tone(r.verdict) + '">' + (r.permanentUrl ? '<a href="' + esc(r.permanentUrl) + '">' + r.verdict + '</a>' : r.verdict) + '</td></tr>').join('') +
+      '</tbody></table></div><p class="muted" style="margin-top:12px">Each verdict links to its signed report, so you can check any row without trusting this page.</p>';
+  } catch (err) {
+    el.innerHTML = '<p class="t-bad">' + esc(err.message || 'Could not reach the demo endpoint.') + '</p>';
+  } finally {
+    busy = false;
+    document.querySelectorAll(BUTTONS).forEach(b => b.disabled = false);
   }
 }
 
 document.querySelectorAll('.agent').forEach(b => b.addEventListener('click', () => show(b.dataset.mode)));
+document.getElementById('lineup').addEventListener('click', runLineup);
 document.getElementById('compare').addEventListener('click', compareAll);
 </script>
 </body>

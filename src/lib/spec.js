@@ -421,7 +421,21 @@ function stableString(value) {
  * only would not belong, because a report whose wording changed still measured
  * the same thing and should still be comparable.
  */
+/**
+ * Bumped by hand when a scoring RULE changes in a way the numbers above cannot
+ * show. The digest only sees constants, so a fix inside the classifier would
+ * otherwise change verdicts under the same stamp, and Halflife would read a
+ * stricter test as a worse agent.
+ *
+ *   1  the twelve probes as frozen on Day 1
+ *   2  differential_corruption can convict at last: the scorer read a field
+ *      name the probe never wrote, so an agent that ignored its input always
+ *      came back "could not be completed"
+ */
+export const CLASSIFIER_REVISION = 2;
+
 export const SCORING_INPUTS = Object.freeze({
+  CLASSIFIER_REVISION,
   MAX_REQUESTS_PER_RUN,
   REQUEST_BUDGET,
   PROBE_ORDER,

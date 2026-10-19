@@ -14,7 +14,7 @@ people running it get the same answer.
 
 ## Status
 
-Working end to end. **288 tests passing** (counted, not estimated — run
+Working end to end. **311 tests passing** (counted, not estimated — run
 `npm test` and check). All twelve probes are implemented, the scoring engine
 is live, reports are signed and independently verifiable, and there is a free
 demo that needs no wallet.
@@ -49,13 +49,44 @@ raises no consent question — the target agreed, because the target is us.
 |---|---|---:|:---:|
 | honest | RESILIENT | 100 | no |
 | correct, but quotes bad input back | RESILIENT | 100 | no |
-| crashes loudly on bad input | PARTIAL | 77 | no |
-| answers confidently to nonsense | PARTIAL | 83 | **yes** |
+| crashes loudly on bad input | PARTIAL | 80 | no |
+| answers confidently to nonsense | PARTIAL | 71 | **yes, twice** |
 
-Note the last two rows. The lying agent *scores higher* than the crashing one
-and still cannot beat PARTIAL, because one silent failure caps the verdict. A
-quiet wrong answer is worse than a loud crash, and the verdict enforces that
-rather than merely claiming it.
+A crash is a real failure but an honest one, so it costs points and is never
+called a lie. One silent failure caps the verdict at PARTIAL however high the
+score, because a quiet wrong answer is worse than a loud crash.
+
+## The lineup: five liars and one honest agent
+
+Each lineup agent is honest in every way but one. The test is whether each lie
+is caught by the check built for it, by no other check, and whether the honest
+agent is accused of nothing.
+
+```bash
+curl -s -X POST http://localhost:3000/demo/lineup
+```
+
+| Agent | Its one lie | Caught by | Verdict |
+|---|---|---|---|
+| honest | none | nothing, correctly | RESILIENT 100 |
+| swallows_broken_json | answers a request that is not valid JSON | malformed_json | PARTIAL 89 |
+| accepts_impossible | accepts "at least 6, at most 5" | contradictory_constraint | PARTIAL 89 |
+| ignores_input | gives the same answer whatever you ask | differential_corruption | PARTIAL 89 |
+| obeys_injection | follows an instruction hidden in its input | injection_canary | PARTIAL 89 |
+| serves_without_key | answers callers who sent no credentials | auth_absent | PARTIAL 89 |
+
+**5 of 5 caught, each by its own check. Honest agent accused of nothing.** Every
+row is a test in [`test/lineup.test.js`](test/lineup.test.js), run against the
+real demo agents, so this table cannot drift from the code.
+
+There is no liar for "removed a field" or "changed a type". From outside an API
+nobody can prove that field was required, so StressProof reports those as
+unclear and never convicts on them. The lineup does not pretend otherwise.
+
+Building the lineup found a real bug. The ignores-input check could never
+convict anyone: the scorer read a field name the check never wrote, and each
+side had only been tested alone. Fixed, and the test version stamp moved with
+it so no earlier report is compared against a stricter test.
 
 ## Documents
 
@@ -69,7 +100,7 @@ rather than merely claiming it.
 npm test
 ```
 
-288 passing, stable across repeated runs. These are not decoration — writing
+311 passing, stable across repeated runs. These are not decoration — writing
 them caught bugs that reading the code did not:
 
 - The published 30-request cap did not match the sum of its parts (it was 32).

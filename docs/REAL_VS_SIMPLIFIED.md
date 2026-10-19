@@ -65,6 +65,14 @@ These are properties of the design, not bugs to be fixed later.
 - **The injection family only catches compliance that echoes.** An agent that
   silently obeys an injected instruction without echoing anything is missed by
   design.
+- **The ignores-input check can miss an agent whose timestamps are coarse.**
+  It learns which fields change on their own from two identical requests. If
+  both land in the same second and the agent stamps answers to the second, the
+  timestamp looks stable, then differs on the corrupted request, and an agent
+  that ignored its input reads as one that read it. That is a missed catch,
+  never a false accusation. Until 2026-10-19 this check could not convict at
+  all: the scorer read a field name the probe never wrote. Fixed, and the test
+  version stamp moved with it (classifier revision 2).
 - **A `RESILIENT` verdict is not a security audit.** It is twelve fixed
   probes, run once, from one machine.
 - **Non-determinism is not penalised.** Two runs against the same agent can
