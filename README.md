@@ -133,6 +133,18 @@ run without proof that the requester controls the target:
 
 ## Licence
 
-Apache-2.0. Includes work adapted from
+MIT — see [`LICENSE`](LICENSE). Includes work adapted from
 [AgentOps-Bench](https://github.com/kunwarshivam/agentops-bench) — see
-[`NOTICE`](NOTICE).
+[Third-party notices](#third-party-notices).
+
+## Third-party notices
+
+The *shapes* of six adversarial prompt-injection delivery techniques (direct
+override, authority impersonation, instruction embedded in an HTML comment
+within data rows, nested-JSON-value injection, base64-wrapped payload, and
+delayed post-processing instruction) are adapted from
+[AgentOps-Bench](https://github.com/kunwarshivam/agentops-bench), licensed
+under the Apache License, Version 2.0. The payload target and the entire
+detection mechanism are StressProof's own: it substitutes its own canary token
+and detects compliance by literal string matching. Nine of the fifteen
+techniques in the original catalogue were deliberately not carried over.
