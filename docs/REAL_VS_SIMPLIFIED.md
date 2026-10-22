@@ -212,4 +212,4 @@ These are properties of the design, not bugs to be fixed later.
 
 The six injection delivery-technique *shapes* are adapted from
 [AgentOps-Bench](https://github.com/kunwarshivam/agentops-bench) (Apache-2.0).
-The payload target and all detection logic are ours. See `NOTICE`.
+The payload target and all detection logic are ours. See "Third-party notices" in the README.
